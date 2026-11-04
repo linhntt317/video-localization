@@ -30,5 +30,8 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 - Vercel: lần thử `create_deployment` gitSource báo `git_info_fail` (Vercel hanvubang16-3091 chưa kết nối repo linhntt317/video-localization) và đã ghi Root Directory=`static` vào project. Bản Vercel hiện cũ, không còn cần cho luồng Colab.
 - Chưa chạy được trên Colab thật (chỉ giả lập thư mục Drive trên Linux).
 
+- Hugging Face Spaces Docker cần gói PRO (xác nhận qua ảnh chụp màn hình của người dùng, 4/11/2026) → không dùng cho phương án miễn phí. Đã bỏ workflow sync-hf. Dockerfile vẫn chạy user uid 1000.
+- Tải video từ link: `/api/import_url` (link trực tiếp hoặc Google Drive qua gdown).
+
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.
