@@ -136,6 +136,7 @@
         <div class="grpbody">
           <p class="hint">Vạch xanh là chỗ đã có câu. Kéo thanh tới chỗ còn thiếu, rồi thêm câu bằng tay hoặc quét lại đúng đoạn đó.</p>
           <div class="tlbar" id="tlBar"><div id="tlSegs"></div><div id="tlRange"></div><i id="tlHead"></i></div>
+          <div class="tlbar sp" id="tlSpBar" title="Đoạn có tiếng nói theo Whisper (cam = đã có câu, đỏ = chưa có câu)"><div id="tlSp"></div></div>
           <input type="range" id="fSlider" min="0" max="100" step="0.1">
           <div class="row tl wrap">
             <button class="btn mini" data-fseek="-5" type="button">−5s</button>
@@ -163,6 +164,23 @@
             <div class="bar"><i></i></div><div class="progrow"><span class="pm"></span><b class="pp">0%</b></div>
             <button class="btn mini danger" data-cancel>Huỷ</button>
           </div>
+          <h3 style="margin-top:14px">Đối chiếu bằng giọng nói (Whisper)</h3>
+          <p class="hint" id="asrHint"></p>
+          <div class="advgrid">
+            <label>Mô hình<select id="asr_model"></select></label>
+            <label>Ngôn ngữ nói<select id="asr_lang"><option value="">Tự nhận</option><option value="zh">Trung</option><option value="en">Anh</option><option value="ja">Nhật</option><option value="ko">Hàn</option><option value="vi">Việt</option></select></label>
+          </div>
+          <button class="btn" id="asrBtn" type="button"><span class="spinner"></span><span class="lbl">Nghe video và đối chiếu</span></button>
+          <div class="prog" id="asrProg" hidden>
+            <div class="bar"><i></i></div><div class="progrow"><span class="pm"></span><b class="pp">0%</b></div>
+            <button class="btn mini danger" data-cancel>Huỷ</button>
+          </div>
+          <p class="hint" id="asrSummary"></p>
+          <div class="row wrap" id="asrBulk" hidden>
+            <button class="btn" id="asrRescan" type="button">Quét lại OCR các đoạn nghi sót</button>
+            <button class="btn" id="asrAddAll" type="button">Thêm tất cả bằng chữ Whisper</button>
+          </div>
+          <div class="asrlist" id="asrList"></div>
           <h3 style="margin-top:14px">Khoảng trống nghi bị sót (từ 3 giây không có câu)</h3>
           <div class="gaps" id="fGaps"></div>
         </div>

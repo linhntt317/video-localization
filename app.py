@@ -12,7 +12,7 @@ import webbrowser
 
 from flask import Flask, Response, abort, jsonify, request, send_file
 
-from studio import ocr, render, srt, translate, util
+from studio import asr, ocr, render, srt, translate, util
 from studio.util import Cancelled
 
 ROOT = util.ROOT
@@ -188,6 +188,7 @@ def status():
         "fonts": sorted(render.list_fonts().keys()), "defaults": render.DEFAULTS,
         "default_rules": translate.DEFAULT_RULES, "default_model": translate.DEFAULT_MODEL,
         "media": bool(MEDIA_DIR), "export_dir": EXPORT_DIR,
+        "asr": {"available": asr.available(), "device": asr.device(), "default_model": asr.default_model(), "models": asr.MODELS},
     })
 
 
@@ -503,12 +504,17 @@ def merge_cues(old, new):
 
 @app.post("/api/p/<pid>/rescan")
 def run_rescan(pid):
-    """Quét lại OCR cho một đoạn thời gian, chỉ bổ sung câu mới, không xoá câu cũ."""
+    """Quét lại OCR cho một hoặc nhiều đoạn thời gian, chỉ bổ sung câu mới, không xoá câu cũ."""
     p = load(pid)
     body = request.get_json(force=True)
-    t0 = max(0.0, float(body.get("t0", 0)))
-    t1 = min(float(body.get("t1", t0 + 3)), float(p["info"]["duration"]))
-    if t1 - t0 < 0.3:
+    dur = float(p["info"]["duration"])
+    if body.get("ranges"):
+        rs = [(max(0.0, float(a) - 0.3), min(dur, float(b) + 0.3)) for a, b in body["ranges"][:300]]
+    else:
+        t0 = max(0.0, float(body.get("t0", 0)))
+        rs = [(t0, min(float(body.get("t1", t0 + 3)), dur))]
+    rs = [r for r in rs if r[1] - r[0] >= 0.3]
+    if not rs:
         return err("Đoạn cần quét quá ngắn.")
     o = p["ocr"]
     if "cues" in body:
@@ -516,17 +522,41 @@ def run_rescan(pid):
     save(p)
 
     def work(task):
-        cues = ocr.run_ocr(p["video"], p["info"], p["bands"], p.get("primary", 0), fps=max(6.0, float(o.get("fps", 6))),
-                           t0=t0, t1=t1, thr=int(body.get("thr", o.get("thr", 210))),
-                           min_conf=float(body.get("min_conf", 40)), seg_min=float(body.get("seg_min", 55)),
-                           ref=bool(o.get("ref", True)),
-                           task=task, cb=task.set)
+        found = []
+        for i, (a, b) in enumerate(rs):
+            found += ocr.run_ocr(p["video"], p["info"], p["bands"], p.get("primary", 0), fps=max(6.0, float(o.get("fps", 6))),
+                                 t0=a, t1=b, thr=int(body.get("thr", o.get("thr", 210))),
+                                 min_conf=float(body.get("min_conf", 40)), seg_min=float(body.get("seg_min", 55)),
+                                 ref=bool(o.get("ref", True)), task=task,
+                                 cb=(lambda pr, msg, i=i: task.set((i + pr) / len(rs), f"Đoạn {i + 1}/{len(rs)}: {msg}")))
         q = load(pid)
-        q["cues"], added = merge_cues(q["cues"], cues)
+        q["cues"], added = merge_cues(q["cues"], found)
         save(q)
-        task.result = {"found": len(cues), "added": added, "cues": len(q["cues"])}
+        task.result = {"found": len(found), "added": added, "cues": len(q["cues"])}
 
     if not start_task(pid, "rescan", work):
+        return err("Đang có tác vụ khác chạy.", 409)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/p/<pid>/asr")
+def run_asr(pid):
+    """Nghe toàn bộ video bằng Whisper, lưu các đoạn có tiếng nói vào dự án để đối chiếu với câu OCR."""
+    p = load(pid)
+    if not p["info"].get("has_audio", True):
+        return err("Video này không có âm thanh.")
+    body = request.get_json(force=True)
+    model = body.get("model") if body.get("model") in asr.MODELS else asr.default_model()
+    lang = (body.get("lang") or "").strip() or None
+
+    def work(task):
+        segs, got = asr.transcribe(p["video"], float(p["info"]["duration"]), model, lang, task=task, cb=task.set)
+        q = load(pid)
+        q["asr"] = {"model": model, "lang": got, "segments": segs}
+        save(q)
+        task.result = {"segments": len(segs), "lang": got}
+
+    if not start_task(pid, "asr", work):
         return err("Đang có tác vụ khác chạy.", 409)
     return jsonify({"ok": True})
 

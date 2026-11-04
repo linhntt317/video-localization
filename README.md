@@ -151,3 +151,11 @@ Biến môi trường dùng cho cách này (tự đặt trong notebook): `MEDIA_
 ### Ghi chú về Hugging Face Spaces
 
 Tháng 11/2026, Hugging Face yêu cầu gói trả phí (PRO) cho Space loại Docker và Gradio; loại Static miễn phí nhưng không chạy được ffmpeg/Tesseract, nên **không dùng được cho app này**. Nếu có gói PRO thì Dockerfile trong repo (chạy bằng user uid 1000, cổng 8765, cần secret `ACCESS_TOKEN`) vẫn dùng được, nhưng chưa được kiểm tra.
+
+### Đối chiếu bằng giọng nói (Whisper)
+
+Ở bước 3, khung "Tìm và bổ sung câu bị sót" có mục **Đối chiếu bằng giọng nói (Whisper)**: app nghe toàn bộ video, rồi đánh dấu những đoạn có người nói mà không có câu OCR nào tương ứng (hàng cam/đỏ dưới thanh thời gian). Với các đoạn đó bạn có thể: **Xem** khung hình, **+ Thêm** câu bằng chữ Whisper (có nhãn "từ Whisper"), **Quét lại OCR các đoạn nghi sót** (hạ ngưỡng, chỉ thêm câu mới), hoặc **Thêm tất cả**.
+
+- Cài trên máy tính: `pip install -r requirements-asr.txt` (Colab đã tự cài). Lần đầu chạy phải tải mô hình về.
+- GPU (Colab: Runtime ▸ Change runtime type ▸ T4) nhanh hơn nhiều; trên CPU hãy dùng tiny/base/small.
+- Chữ Whisper là lời nói được nhận dạng nên có thể khác phụ đề gốc hoặc sai chính tả; đoạn không có phụ đề mà có tiếng (lời dẫn, nhạc có lời) cũng bị đánh dấu, bạn bỏ qua là được.

@@ -43,5 +43,7 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 - Công cụ chẩn đoán: `POST /api/p/<pid>/probe` (`ocr.probe_frame`) + nút "Đọc thử khung này" ở bước 3: cho từng dải xem ảnh cắt, ảnh chữ tách được, chữ đọc ra, độ tin cậy và lý do bị bỏ (no_text/unreadable/low_conf/ok); có nút tạo câu từ chữ đọc được.
 - Tốc độ: Tesseract ~80% thời gian; `ocr.ref=false` (bỏ dòng đối chiếu) nhanh ~2,5 lần; `_ocr_best` dừng sớm khi conf ≥86.
 
+- Whisper (`studio/asr.py`, faster-whisper, `requirements-asr.txt` tuỳ chọn; Colab tự cài): `POST /api/p/<pid>/asr` lưu `project["asr"]={model,lang,segments}`; giao diện đối chiếu với câu OCR (dung sai 0,4s), đánh dấu đoạn nghi sót, thêm câu (`asr:true`), quét lại OCR theo `ranges` (`/rescan`). `asr.LOADER` thay được khi kiểm thử. **Chưa chạy được Whisper thật** (sandbox chặn tải mô hình từ Hugging Face): chỉ kiểm thử bằng mô hình giả; GPU/cuDNN trên Colab cũng chưa kiểm tra.
+
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.

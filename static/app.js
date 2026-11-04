@@ -231,7 +231,7 @@ async function openProject(id) {
   S.cur = 0;
   /* nếu đang có tác vụ chạy nền (vd. điện thoại khoá màn hình lúc đang quét/xuất) thì nối lại thanh tiến độ */
   const t = await api(`/api/p/${id}/task`).catch(() => null);
-  const R = { ocr: [2, '#ocrProg', onOcrDone, '#ocrBtn'], translate: [3, '#trProg', onTrDone, '#trBtn'], render: [4, '#rdProg', onRenderDone, '#renderBtn'], rescan: [3, '#rsProg', onRescanDone, '#rsBtn'] }[t?.kind];
+  const R = { ocr: [2, '#ocrProg', onOcrDone, '#ocrBtn'], translate: [3, '#trProg', onTrDone, '#trBtn'], render: [4, '#rdProg', onRenderDone, '#renderBtn'], rescan: [3, '#rsProg', onRescanDone, '#rsBtn'], asr: [3, '#asrProg', onAsrDone, '#asrBtn'] }[t?.kind];
   if (t?.state === 'running' && R) {
     S.maxStep = 4; setStep(R[0]);
     setTimeout(() => runTask($(R[1]), R[2], $(R[3])), 300);
@@ -401,7 +401,7 @@ function renderCues(flashIdx = -1) {
     <div class="cue ${i === S.cur ? 'sel' : ''} ${i === flashIdx ? 'flash' : ''}" data-i="${i}" style="--i:${i}">
       <div class="n">${c.id}</div>
       <div class="times"><input type="text" data-k="start" value="${fmt(c.start)}"><input type="text" data-k="end" value="${fmt(c.end)}">
-        ${c.conf != null ? `<span class="conf ${c.conf < 80 ? 'low' : ''}">tin cậy ${c.conf}%</span>` : ''}</div>
+        ${c.conf != null ? `<span class="conf ${c.conf < 80 ? 'low' : ''}">tin cậy ${c.conf}%</span>` : ''}${c.asr ? '<span class="conf asr">từ Whisper</span>' : ''}</div>
       <div><textarea class="src" data-k="src" placeholder="Văn bản gốc">${esc(c.src)}</textarea>${c.ref ? `<small>Đối chiếu: ${esc(c.ref)}</small>` : ''}</div>
       <div><textarea class="vi" data-k="vi" placeholder="Bản dịch tiếng Việt">${esc(c.vi)}</textarea></div>
       <div class="acts"><button data-act="merge" title="Gộp với câu dưới">⤓</button><button data-act="del" title="Xoá câu">🗑</button></div>
@@ -504,6 +504,7 @@ function drawTimeline() {
   g.innerHTML = gaps.length ? gaps.slice(0, 40).map((x, i) => `<button class="btn mini" type="button" data-gap="${i}">${fmt(x[0])} – ${fmt(x[1])}</button>`).join('') + (gaps.length > 40 ? `<span class="hint">và ${gaps.length - 40} khoảng nữa</span>` : '')
     : '<span class="hint">Không có khoảng trống dài.</span>';
   g._gaps = gaps;
+  renderAsr();
 }
 $('#fGaps').addEventListener('click', e => {
   const b = e.target.closest('[data-gap]'); if (!b) return;
@@ -575,6 +576,70 @@ $('#probeOut').addEventListener('click', e => {
   const row = $('#cues').children[S.cur], ta = row && $('textarea.src', row);
   if (ta) { ta.value = r.text; ta.dispatchEvent(new Event('input', { bubbles: true })); }
 });
+
+
+/* ---- đối chiếu bằng Whisper ---- */
+function asrUncovered() {
+  const segs = S.p.asr?.segments || [], cs = S.p.cues, out = [];
+  segs.forEach((g, i) => {
+    const d = g.end - g.start; if (d < 0.4 || (g.text || '').trim().length < 2) return;
+    const need = Math.min(0.3, d * 0.5);
+    const hit = cs.some(c => Math.min(c.end + 0.4, g.end) - Math.max(c.start - 0.4, g.start) >= need);
+    if (!hit) out.push({ ...g, i });
+  });
+  return out;
+}
+function renderAsr() {
+  const a = S.p.asr, st = S.status.asr || {}, d = S.p.info.duration;
+  const sel = $('#asr_model');
+  if (!sel.options.length) {
+    sel.innerHTML = (st.models || []).map(m => `<option value="${m}">${m}${m === st.default_model ? ' (đề nghị)' : ''}</option>`).join('');
+    sel.value = st.default_model || 'small';
+  }
+  $('#asrHint').textContent = !st.available ? 'Máy xử lý chưa cài Whisper (faster-whisper). Colab: chạy lại ô cài đặt mới nhất; máy tính: pip install -r requirements-asr.txt.'
+    : `Nghe giọng nói rồi so với các câu OCR: chỗ có người nói mà không có câu nào sẽ được đánh dấu. Máy này dùng ${st.device === 'cuda' ? 'GPU (nhanh)' : 'CPU (chậm, nên chọn tiny/base/small)'}; lần đầu phải tải mô hình về.`;
+  $('#asrBtn').disabled = !st.available;
+  const miss = a ? asrUncovered() : [], bar = $('#tlSp');
+  bar.innerHTML = (a?.segments || []).map((g, i) => `<i class="${miss.some(m => m.i === i) ? 'miss' : ''}" style="left:${g.start / d * 100}%;width:${Math.max(.2, (g.end - g.start) / d * 100)}%"></i>`).join('');
+  $('#tlSpBar').style.display = a ? 'block' : 'none';
+  $('#asrSummary').textContent = a ? `Whisper (${a.model}, ngôn ngữ ${a.lang || '?'}) nghe được ${a.segments.length} đoạn; ${miss.length} đoạn chưa có câu OCR tương ứng.` : '';
+  $('#asrBulk').hidden = !miss.length;
+  $('#asrList').innerHTML = miss.slice(0, 60).map(m => `<div class="asritem"><span class="tm">${fmt(m.start)}–${fmt(m.end)}</span><span class="tx">${esc(m.text)}</span><span class="bt"><button class="btn mini" type="button" data-av="${m.i}">Xem</button><button class="btn mini" type="button" data-aa="${m.i}">+ Thêm</button></span></div>`).join('')
+    + (miss.length > 60 ? `<div class="hint">và ${miss.length - 60} đoạn nữa (thêm hoặc quét lại bớt rồi danh sách sẽ ngắn lại)</div>` : '');
+}
+function insertCue(start, end, src, extra = {}) {
+  const cs = S.p.cues; let i = cs.findIndex(c => c.start > start); if (i < 0) i = cs.length;
+  cs.splice(i, 0, { id: 0, start: +start.toFixed(2), end: +end.toFixed(2), src, ref: '', vi: '', ...extra });
+  return i;
+}
+$('#asrBtn').onclick = async () => {
+  try { await api(`/api/p/${S.p.id}/asr`, { json: { model: $('#asr_model').value, lang: $('#asr_lang').value } }); }
+  catch (e) { return toast(e.message, true); }
+  runTask($('#asrProg'), onAsrDone, $('#asrBtn'));
+};
+async function onAsrDone(t) {
+  S.p = await api('/api/p/' + S.p.id); renderCues(); updateStat();
+  toast(`Whisper nghe được ${t.result?.segments ?? 0} đoạn. Xem danh sách đoạn chưa có câu bên dưới.`);
+}
+$('#asrList').addEventListener('click', e => {
+  const v = e.target.closest('[data-av]'), a = e.target.closest('[data-aa]');
+  if (v) { const g = S.p.asr.segments[+v.dataset.av]; F.a = g.start; F.b = g.end; setF((g.start + g.end) / 2); $('#fSlider').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  if (a) { const g = S.p.asr.segments[+a.dataset.aa], i = insertCue(g.start, g.end, g.text, { asr: true }); renumber(); S.cur = i; renderCues(i); updateStat(); save(); toast('Đã thêm câu từ Whisper (nhớ kiểm tra lại chữ).'); }
+});
+$('#asrAddAll').onclick = () => {
+  const m = asrUncovered(); if (!m.length) return;
+  if (!confirm(`Thêm ${m.length} câu bằng chữ Whisper? Chữ này là lời nói được nhận dạng, có thể sai chính tả hoặc khác phụ đề gốc; các câu thêm có nhãn "từ Whisper".`)) return;
+  m.forEach(g => insertCue(g.start, g.end, g.text, { asr: true }));
+  renumber(); renderCues(); updateStat(); save(); toast(`Đã thêm ${m.length} câu từ Whisper.`);
+};
+$('#asrRescan').onclick = async () => {
+  const m = asrUncovered(); if (!m.length) return;
+  try {
+    await save(true);
+    await api(`/api/p/${S.p.id}/rescan`, { json: { ranges: m.map(g => [g.start, g.end]), min_conf: Math.min(+$('#rs_conf').value, 30), seg_min: Math.min(+$('#rs_seg').value, 45), thr: Math.max(120, +$('#rs_thr').value - 20) } });
+  } catch (e) { return toast(e.message, true); }
+  runTask($('#rsProg'), onRescanDone, $('#asrRescan'));
+};
 
 /* nhập SRT */
 $('#impBtn').onclick = () => { $('#impText').value = ''; $('#impFile').value = ''; $('#dlgImp').showModal(); };

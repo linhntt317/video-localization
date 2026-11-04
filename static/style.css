@@ -242,3 +242,13 @@ dialog::backdrop{background:rgba(2,8,5,.7);backdrop-filter:blur(6px);animation:f
 .pband .ptxt{font-size:15px;margin:6px 0;color:var(--text);word-break:break-word}
 .pband .why{font-size:13px;color:var(--mute)} .pband .why.bad{color:#fca5a5} .pband .why.good{color:#86efac}
 .pband .tag{font-size:11px;padding:1px 8px;border-radius:99px;background:#4ade8026;color:var(--accent)}
+
+.tlbar.sp{height:10px;margin-top:-2px}
+#tlSp i{position:absolute;top:0;bottom:0;background:var(--warm);opacity:.75;min-width:2px}
+#tlSp i.miss{background:var(--danger);opacity:.95}
+.asrlist{display:grid;gap:6px;margin-top:8px}
+.asritem{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-size:14px}
+.asritem .tm{color:var(--warm);font-variant-numeric:tabular-nums;font-size:12px}
+.asritem .tx{word-break:break-word}
+.asritem .bt{display:flex;gap:6px}
+.cue .conf.asr{background:#fbbf2426;color:var(--warm)}
