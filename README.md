@@ -135,7 +135,7 @@ Sau khi sửa `static/`, chạy `./build_site.sh` để tạo thư mục `site/`
 
 ### Chỉ có điện thoại: dùng Google Colab làm máy xử lý (khuyên dùng, kể cả video 2-4 GB)
 
-Không cần máy tính, VPS hay Vercel. Mở `colab.ipynb` bằng Google Colab, chạy lần lượt 3 ô. Ô cuối in ra một link dạng `https://xxxx.trycloudflare.com/?token=...`: mở link đó trên điện thoại là dùng ngay (giao diện do chính máy xử lý phục vụ, không bị chặn http/https hay CORS).
+Không cần máy tính, VPS hay Vercel. Mở [colab.ipynb trong Colab](https://colab.research.google.com/github/linhntt317/video-localization/blob/claude/web-app-continue-6807bw/colab.ipynb) và bấm ▶ ở **một ô duy nhất** (dạng form, tự cài đặt, gắn Drive, chạy server). Ô đó in ra một link dạng `https://xxxx.trycloudflare.com/?token=...`: mở link đó trên điện thoại là dùng ngay (giao diện do chính máy xử lý phục vụ, không bị chặn http/https hay CORS).
 
 Quy trình với video dài:
 1. Trong app Google Drive trên điện thoại, tải video vào **video-localization/videos** (ô 2 tự tạo thư mục).
