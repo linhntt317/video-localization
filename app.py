@@ -109,6 +109,25 @@ def restore_backups():
                 pass
 
 
+def video_error(p):
+    """Nếu file video của dự án không còn (vd. Colab vừa khởi động lại), trả về thông báo rõ ràng (và tự chép lại từ Drive nếu có thể)."""
+    v = p.get("video") or ""
+    if os.path.isfile(v):
+        return None
+    name = os.path.basename(v)
+    if MEDIA_SRC and MEDIA_DIR and os.path.realpath(v).startswith(os.path.realpath(MEDIA_DIR) + os.sep):
+        rel = os.path.relpath(os.path.realpath(v), os.path.realpath(MEDIA_DIR))
+        if os.path.isfile(os.path.join(MEDIA_SRC, rel)):
+            start_sync()
+            if SYNC["running"]:
+                tot = SYNC["total"] or 1
+                return (f"Video '{name}' đang được chép từ Drive về máy xử lý ({SYNC['done'] * 100 // tot}%). "
+                        "Chờ chép xong rồi thử lại (có thể mất vài phút với video lớn).")
+            return f"Đã bắt đầu chép lại video '{name}' từ Drive. Chờ một lát rồi thử lại."
+    return (f"Không tìm thấy file video '{name}' trên máy xử lý. Có thể máy xử lý (Colab) vừa khởi động lại. "
+            "Hãy để video trong Drive ▸ video-localization ▸ videos rồi bấm 'Làm mới danh sách' ở bước 1, hoặc tạo dự án mới.")
+
+
 def media_path(rel):
     """Đổi tên file trong MEDIA_DIR thành đường dẫn thật, chặn thoát khỏi thư mục."""
     if not MEDIA_DIR:
@@ -387,7 +406,9 @@ def create_project():
 
 @app.get("/api/p/<pid>")
 def get_project(pid):
-    return jsonify(load(pid))
+    p = load(pid)
+    p["_video_error"] = video_error(p)  # chỉ để giao diện hiển thị, không lưu vào project.json
+    return jsonify(p)
 
 
 @app.delete("/api/p/<pid>")
@@ -416,6 +437,9 @@ def save_project(pid):
 @app.get("/api/p/<pid>/frame")
 def frame(pid):
     p = load(pid)
+    ve = video_error(p)
+    if ve:
+        return err(ve, 503)
     t = float(request.args.get("t", 0))
     w = int(request.args.get("w", 960))
     try:
@@ -468,6 +492,9 @@ def ocr_ranges(p, ranges, task, p0, p1, thr, min_conf, seg_min):
 @app.post("/api/p/<pid>/ocr")
 def run_ocr(pid):
     p = load(pid)
+    ve = video_error(p)
+    if ve:
+        return err(ve, 503)
     body = request.get_json(force=True)
     bands = body.get("bands") or p["bands"]
     primary = int(body.get("primary", p.get("primary", 0)))
@@ -535,6 +562,9 @@ def run_ocr(pid):
 @app.post("/api/p/<pid>/probe")
 def probe_ocr(pid):
     p = load(pid)
+    ve = video_error(p)
+    if ve:
+        return err(ve, 503)
     body = request.get_json(force=True)
     o = p["ocr"]
     try:
@@ -569,6 +599,9 @@ def merge_cues(old, new):
 def run_rescan(pid):
     """Quét lại OCR cho một hoặc nhiều đoạn thời gian, chỉ bổ sung câu mới, không xoá câu cũ."""
     p = load(pid)
+    ve = video_error(p)
+    if ve:
+        return err(ve, 503)
     body = request.get_json(force=True)
     dur = float(p["info"]["duration"])
     if body.get("ranges"):
@@ -606,6 +639,9 @@ def run_rescan(pid):
 def run_asr(pid):
     """Nghe toàn bộ video bằng Whisper, lưu các đoạn có tiếng nói vào dự án để đối chiếu với câu OCR."""
     p = load(pid)
+    ve = video_error(p)
+    if ve:
+        return err(ve, 503)
     if not p["info"].get("has_audio", True):
         return err("Video này không có âm thanh.")
     body = request.get_json(force=True)
@@ -711,6 +747,9 @@ def get_asset(pid, name):
 @app.post("/api/p/<pid>/preview")
 def preview(pid):
     p = load(pid)
+    ve = video_error(p)
+    if ve:
+        return err(ve, 503)
     body = request.get_json(force=True)
     cues = body.get("cues", p["cues"])
     try:
@@ -724,6 +763,9 @@ def preview(pid):
 @app.post("/api/p/<pid>/render")
 def run_render(pid):
     p = load(pid)
+    ve = video_error(p)
+    if ve:
+        return err(ve, 503)
     body = request.get_json(force=True)
     if "cues" in body:
         p["cues"] = body["cues"]

@@ -227,6 +227,7 @@ $('#projects').addEventListener('click', async e => {
 });
 async function openProject(id) {
   S.p = await api('/api/p/' + id);
+  if (S.p._video_error) toast(S.p._video_error, true);
   S.maxStep = S.p.cues.length ? 3 : 2;
   S.cur = 0;
   /* nếu đang có tác vụ chạy nền (vd. điện thoại khoá màn hình lúc đang quét/xuất) thì nối lại thanh tiến độ */
@@ -289,11 +290,24 @@ $('#pathBtn').onclick = async () => {
 
 /* ---------------------------------------------------------------- bước 2 */
 function frameUrl(t, w = 1280) { return U(`/api/p/${S.p.id}/frame?t=${t.toFixed(2)}&w=${w}&_=${Date.now() % 100000}`); }
-function loadImg(img, skel, url) {
+function loadImg(img, skel, url, tries = 0) {
+  const view = img.parentElement, n = img._n = (img._n || 0) + 1;
+  $('.vmsg', view)?.remove();
   skel?.classList.remove('off'); img.classList.remove('ready');
   const tmp = new Image();
-  tmp.onload = () => { img.src = tmp.src; img.classList.add('ready'); skel?.classList.add('off'); };
-  tmp.onerror = () => { skel?.classList.add('off'); };
+  tmp.onload = () => { if (img._n !== n) return; img.src = tmp.src; img.classList.add('ready'); skel?.classList.add('off'); };
+  tmp.onerror = async () => {
+    if (img._n !== n) return;
+    skel?.classList.add('off');
+    let msg = 'Không tải được khung hình (mất kết nối với máy xử lý?).', wait = false;
+    try { const j = await (await fetch(url)).json(); if (j?.error) { msg = j.error; wait = /đang được chép|Đã bắt đầu chép/.test(msg); } } catch (e) { }
+    if (img._n !== n) return;
+    const d = document.createElement('div'); d.className = 'vmsg';
+    d.innerHTML = `<span>${esc(msg)}</span><button class="btn mini" type="button">Thử lại</button>`;
+    $('button', d).onclick = () => loadImg(img, skel, url, 0);
+    view.appendChild(d);
+    if (wait && tries < 120) setTimeout(() => { if (img._n === n) loadImg(img, skel, url, tries + 1); }, 5000);
+  };
   tmp.src = url;
 }
 function enter2() {

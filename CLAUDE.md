@@ -47,5 +47,7 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 
 - `POST /api/p/<pid>/ocr` nhận `ocr.asr={on,model,lang,add}`: OCR (0-50%) → Whisper (50-80%) → `ocr_ranges` quét lại OCR các đoạn `asr_uncovered` với ngưỡng thấp (80-97%) → tuỳ chọn thêm câu Whisper (`asr:true`). Lỗi Whisper chỉ ghi `result.asr_error`, không mất kết quả OCR. Đã kiểm thử bằng mô hình giả (`asr.LOADER`).
 
+- `video_error(p)` (app.py): nếu file video của dự án mất (Colab khởi động lại, dự án khôi phục từ BACKUP_DIR mà video chưa chép về) thì frame/ocr/rescan/asr/probe/preview/render trả 503 kèm lý do; nếu video còn ở `MEDIA_SRC` thì tự `start_sync()`. `GET /api/p/<pid>` kèm `_video_error`. `loadImg` hiện lớp thông báo + tự thử lại mỗi 5s khi đang chép.
+
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.
