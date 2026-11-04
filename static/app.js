@@ -470,7 +470,15 @@ async function onTrDone(t) {
 }
 /* nhập SRT */
 $('#impBtn').onclick = () => { $('#impText').value = ''; $('#impFile').value = ''; $('#dlgImp').showModal(); };
-$('#impFile').onchange = async e => { const f = e.target.files[0]; if (f) $('#impText').value = await f.text(); };
+$('#impFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const b = new Uint8Array(await f.arrayBuffer());
+    const enc = b[0] === 0xFF && b[1] === 0xFE ? 'utf-16le' : b[0] === 0xFE && b[1] === 0xFF ? 'utf-16be' : 'utf-8';
+    $('#impText').value = new TextDecoder(enc).decode(b).replace(/^\uFEFF/, '');
+    toast(`Đã đọc file ${f.name}. Bấm Nhập để áp dụng.`);
+  } catch (err) { toast('Không đọc được file: ' + err.message, true); }
+};
 $('#dlgImp').addEventListener('close', async () => {
   if ($('#dlgImp').returnValue !== 'go') return;
   try {
