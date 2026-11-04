@@ -130,7 +130,7 @@ def index():
 
 @app.get("/logo.png")
 def default_logo():
-    return send_file(os.path.join(util.ASSET_DIR, "dauxanh_logo.png"), mimetype="image/png")
+    return send_file(os.path.join(util.ASSET_DIR, "logo.png"), mimetype="image/png")
 
 
 @app.get("/api/status")
@@ -339,8 +339,11 @@ def upload_asset(pid):
 @app.get("/api/p/<pid>/asset/<name>")
 def get_asset(pid, name):
     d = pdir(pid)
+    name = os.path.basename(name)
+    if name == "dauxanh_logo.png":  # tên cũ của logo mặc định
+        name = "logo.png"
     for base in (os.path.join(d, "assets"), util.ASSET_DIR):
-        f = os.path.join(base, os.path.basename(name))
+        f = os.path.join(base, name)
         if os.path.isfile(f):
             return send_file(f)
     abort(404)

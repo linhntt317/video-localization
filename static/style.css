@@ -36,6 +36,7 @@ a{color:var(--accent)}
 .stepper button.done i{background:var(--accent);color:#06210f;animation:pop .5s var(--ease)}
 .stepper button.done i::before{content:"✓"} .stepper button.done i{font-size:0} .stepper button.done i::before{font-size:12px}
 .stepper button:hover:not(.on){color:var(--text)}
+.stepper button span{white-space:nowrap}
 .stepper button:disabled{opacity:.4;cursor:not-allowed}
 .pill{position:absolute;top:4px;bottom:4px;left:0;width:0;border-radius:999px;background:linear-gradient(135deg,var(--accent),#86efac);box-shadow:0 4px 18px rgba(74,222,128,.35);transition:left .5s var(--ease),width .5s var(--ease)}
 @keyframes pop{0%{transform:scale(.4)}60%{transform:scale(1.35)}100%{transform:scale(1)}}
@@ -220,4 +221,4 @@ dialog::backdrop{background:rgba(2,8,5,.7);backdrop-filter:blur(6px);animation:f
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
   .bg i{animation:none}
 }
-.chip.srv{cursor:pointer;font:inherit;font-size:12px}.chip.srv:hover{border-color:var(--ok)}.hint.bad{color:#fca5a5}
+.chip.srv{cursor:pointer;font:inherit;font-size:12px}.chip.srv:hover{border-color:var(--ok)}.hint.bad{color:#fca5a5}.hint.good{color:#86efac}

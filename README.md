@@ -69,7 +69,7 @@ H.264 (High profile), yuv420p, âm thanh AAC-LC 48 kHz stereo, `faststart` (thô
 ## 5. Thêm font, thêm logo
 
 - Bỏ file `.ttf` hoặc `.otf` vào thư mục `fonts/`, mở lại app: font xuất hiện trong mục **Phụ đề tiếng Việt**. Chọn font có hỗ trợ tiếng Việt có dấu.
-- Logo mặc định là `assets/dauxanh_logo.png`. Ở bước 4, mục **Logo**, bạn có thể tải logo khác lên (PNG nền trong suốt cho đẹp nhất).
+- Logo mặc định là `assets/logo.png`. Ở bước 4, mục **Logo**, bạn có thể tải logo khác lên (PNG nền trong suốt cho đẹp nhất).
 
 ## 6. Xử lý lỗi thường gặp
 
@@ -107,11 +107,9 @@ Dự án nào cũng tự lưu. Muốn xoá thì bấm dấu × ở danh sách d�
 
 Trang web chỉ là giao diện. Quét OCR và xuất video vẫn chạy trên máy xử lý của bạn.
 
-**Cách 1: app trên máy bạn.** Chạy app như mục 2, nhưng cho phép trang web gọi vào máy bạn bằng cách đặt biến môi trường trước khi chạy:
-- Windows: `set ALLOWED_ORIGINS=https://video-localization.vercel.app` rồi chạy `start.bat`
-- macOS/Linux: `ALLOWED_ORIGINS=https://video-localization.vercel.app ./start.sh`
+**Cách 1: app trên máy bạn.** Chạy app như mục 2. `start.bat`, `start.sh`, `start.command` đã tự cho phép trang https://video-localization.vercel.app gọi vào máy (biến `ALLOWED_ORIGINS`; muốn thêm trang khác thì đặt biến này trước khi chạy, cách nhau bằng dấu phẩy).
 
-Mở trang web, bấm "Máy xử lý", để địa chỉ `http://127.0.0.1:8765`. Chrome/Edge dùng được; Safari chặn trang https gọi http nên hãy dùng `http://127.0.0.1:8765` trực tiếp.
+Mở trang web, bấm "Máy xử lý", để địa chỉ `http://127.0.0.1:8765`, bấm **Thử kết nối** rồi **Lưu và kết nối**. Nếu lỗi, hộp thoại sẽ nói rõ lý do (app chưa chạy, sai mã truy cập, chưa cho phép origin, trình duyệt chặn http...). Chrome/Edge dùng được (nếu Chrome hỏi quyền truy cập thiết bị trong mạng cục bộ, bấm Cho phép); Safari chặn trang https gọi http nên hãy dùng `http://127.0.0.1:8765` trực tiếp.
 
 **Cách 2: server riêng (Docker).**
 ```
@@ -130,3 +128,7 @@ ACCESS_TOKEN=matkhaucuaban ALLOWED_ORIGINS=https://video-localization.vercel.app
 3. Nó in ra địa chỉ dạng `https://xxxx.trycloudflare.com`. Trên điện thoại mở https://video-localization.vercel.app, bấm "Máy xử lý", dán địa chỉ đó và mã truy cập.
 
 Lưu ý: tải video lên qua tunnel miễn phí bị giới hạn khoảng 100 MB mỗi lần. Với video lớn, hãy để file trên máy tính và dùng ô "đường dẫn file có sẵn" ở bước 1 (gõ trên điện thoại đường dẫn của máy tính). Tắt tunnel khi không dùng.
+
+### Cập nhật bản trên Vercel
+
+Sau khi sửa `static/`, chạy `./build_site.sh` để tạo thư mục `site/` (đã minify bằng esbuild, kèm logo), rồi `./build_site.sh --deploy` (cần `vercel login`, chọn project `video-localization`).

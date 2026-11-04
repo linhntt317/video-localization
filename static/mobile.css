@@ -1,7 +1,7 @@
 @media (max-width:700px){
 html{-webkit-text-size-adjust:100%}
 main{padding:16px 14px 70px}
-.top{flex-wrap:wrap;gap:10px;padding:10px 14px}
+.top{flex-wrap:wrap;gap:10px;padding:10px 14px;position:relative}
 .brand small{display:none}
 .stepper{order:3;width:100%;margin:0;justify-content:space-between}
 .stepper button{padding:8px 12px;flex:1;justify-content:center}
@@ -18,7 +18,11 @@ dialog{width:calc(100vw - 24px);max-width:calc(100vw - 24px);max-height:90vh;ove
 .bandcard .r2{grid-template-columns:1fr}
 .advgrid{grid-template-columns:1fr 1fr}
 .toolbar .btn{flex:1 1 auto}
-.cue{grid-template-columns:30px 1fr}
+.cue{grid-template-columns:34px minmax(0,1fr) auto;gap:8px}
+.cue>div:nth-child(3),.cue>div:nth-child(4){grid-column:1/-1}
+.cue .times{grid-template-columns:1fr 1fr}
+.cue .times .conf{grid-column:1/-1}
+.cue .acts{grid-auto-flow:column}
 .cardhead{flex-wrap:wrap}
 #toasts{left:12px;right:12px}
 .toast{max-width:none}

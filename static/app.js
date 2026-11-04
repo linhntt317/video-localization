@@ -6,14 +6,48 @@ const LANGS = { eng: 'Tiếng Anh', chi_sim: 'Trung giản thể', chi_tra: 'Tru
 
 
 /* ---------------------------------------------------------------- địa chỉ máy xử lý */
-const LOCAL = ['127.0.0.1', 'localhost', ''].includes(location.hostname);
+const LOCAL = ['127.0.0.1', 'localhost', '[::1]', ''].includes(location.hostname);
 const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
 const lsSet = (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) { } };
+const DEFAULT_SERVER = 'http://127.0.0.1:8765';
 const CFG = {
-  base: LOCAL ? '' : (lsGet('vl_server') || 'http://127.0.0.1:8765'),
+  base: LOCAL ? '' : (lsGet('vl_server') || DEFAULT_SERVER),
   token: lsGet('vl_token'),
 };
 const U = path => CFG.base + path + (CFG.token && path.startsWith('/api/') ? (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(CFG.token) : '');
+const isLoopHost = h => ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(h);
+/* Safari và mọi trình duyệt trên iPhone/iPad (đều dùng WebKit) chặn trang https gọi http, kể cả 127.0.0.1 */
+const STRICT_MIXED = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
+  || /^((?!chrome|chromium|android|crios|fxios|edg|opr).)*safari/i.test(navigator.userAgent);
+function normBase(u) {
+  u = (u || '').trim().replace(/\/+$/, '');
+  if (u && !/^https?:\/\//i.test(u)) u = (isLoopHost(u.split(/[:/]/)[0]) || /^\d+\.\d+\.\d+\.\d+/.test(u) ? 'http://' : 'https://') + u;
+  return u;
+}
+/* thử gọi /api/status, trả về { ok, status } hoặc { ok:false, why } giải thích bằng tiếng Việt */
+async function probeServer(base, token) {
+  let url;
+  try { url = new URL((base || location.origin) + '/api/status'); } catch (e) { return { ok: false, why: 'Địa chỉ không hợp lệ. Ví dụ đúng: http://127.0.0.1:8765 hoặc https://xxxx.trycloudflare.com' }; }
+  if (location.protocol === 'https:' && url.protocol === 'http:') {
+    if (!isLoopHost(url.hostname)) return { ok: false, why: 'Trang https không được gọi tới địa chỉ http (trừ 127.0.0.1). Hãy dùng địa chỉ https, ví dụ Cloudflare Tunnel (xem README mục 9).' };
+    if (STRICT_MIXED) return { ok: false, why: 'Safari và trình duyệt trên iPhone/iPad chặn trang https gọi http://127.0.0.1. Trên máy tính hãy mở thẳng http://127.0.0.1:8765, hoặc dùng Chrome/Edge; trên điện thoại hãy dùng địa chỉ https (Cloudflare Tunnel).' };
+  }
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const r = await fetch(url, { headers: token ? { 'X-Access-Token': token } : {}, signal: ctl.signal, cache: 'no-store' });
+    if (r.status === 401) return { ok: false, why: 'Máy xử lý yêu cầu mã truy cập: mã đang nhập bị sai hoặc để trống.' };
+    if (!r.ok) return { ok: false, why: `Máy xử lý trả lỗi ${r.status}. Kiểm tra lại địa chỉ.` };
+    let st = null; try { st = await r.json(); } catch (e) { }
+    if (!st || !('ffmpeg' in st)) return { ok: false, why: 'Địa chỉ này trả lời nhưng không phải máy xử lý Video localization.' };
+    return { ok: true, status: st };
+  } catch (e) {
+    if (e.name === 'AbortError') return { ok: false, why: 'Hết thời gian chờ: máy xử lý không trả lời sau 8 giây.' };
+    return {
+      ok: false, why: LOCAL ? 'Không gọi được máy xử lý. App có còn chạy không? Hãy mở lại start.bat / start.sh.'
+        : `Không kết nối được. Kiểm tra: (1) app đang chạy (start.bat / start.sh); (2) địa chỉ đúng; (3) máy xử lý cho phép trang này: biến ALLOWED_ORIGINS phải có ${location.origin}; (4) nếu trình duyệt hỏi quyền truy cập thiết bị trong mạng cục bộ, hãy bấm Cho phép.`
+    };
+  } finally { clearTimeout(timer); }
+}
 
 const S = { status: null, p: null, step: 1, cur: 0, task: null, poll: null, saveT: null, pvT: null, pvN: 0, maxStep: 1 };
 
@@ -23,6 +57,7 @@ async function api(path, opt = {}) {
   if (o.json !== undefined) { o.method = o.method || 'POST'; o.headers = { 'content-type': 'application/json' }; o.body = JSON.stringify(o.json); delete o.json; }
   o.headers = { ...(o.headers || {}), ...(CFG.token ? { 'X-Access-Token': CFG.token } : {}) };
   const r = await fetch(CFG.base + path, o);
+  if (r.status === 401) { showConnect('Máy xử lý yêu cầu mã truy cập: mã đang nhập bị sai hoặc để trống.'); throw new Error('Sai hoặc thiếu mã truy cập.'); }
   if (!r.ok) {
     let m = r.statusText;
     try { m = (await r.json()).error || m; } catch (e) { }
@@ -117,7 +152,9 @@ function runTask(root, onDone, btn) {
 
 /* ---------------------------------------------------------------- khởi động */
 async function init() {
-  try { S.status = await api('/api/status'); } catch (e) { showConnect(true); return; }
+  const pr = await probeServer(CFG.base, CFG.token);
+  if (!pr.ok) { showConnect(pr.why); return; }
+  S.status = pr.status;
   $('#srvBtn').textContent = LOCAL ? 'Máy xử lý: trang này' : 'Máy xử lý: ' + CFG.base.replace(/^https?:\/\//, '');
   const st = S.status;
   $('#chips').innerHTML = [['ffmpeg', st.ffmpeg], ['libass', st.libass], ['Tesseract', st.tesseract]].map(([n, ok]) => `<span class="chip ${ok ? '' : 'bad'}" title="${ok ? 'Đã sẵn sàng' : 'Chưa cài, xem README'}">${n}</span>`).join('');
@@ -342,7 +379,8 @@ $('#expSrc').onclick = async e => { e.preventDefault(); await save(true); locati
 /* dịch bằng Claude */
 $('#trBtn').onclick = () => {
   const t = S.p.translate || {};
-  $('#trKey').value = localStorage.getItem('dx_key') || ''; $('#trRemember').checked = !!localStorage.getItem('dx_key');
+  if (!lsGet('vl_key') && lsGet('dx_key')) { lsSet('vl_key', lsGet('dx_key')); lsSet('dx_key', ''); }
+  $('#trKey').value = lsGet('vl_key'); $('#trRemember').checked = !!lsGet('vl_key');
   $('#trModel').value = t.model || S.status.default_model; $('#trRules').value = t.rules || S.status.default_rules; $('#trGloss').value = t.glossary || '';
   $('#dlgTr').showModal();
 };
@@ -350,7 +388,7 @@ $('#dlgTr').addEventListener('close', async () => {
   if ($('#dlgTr').returnValue !== 'go') return;
   const key = $('#trKey').value.trim();
   if (!key) return toast('Chưa nhập API key', true);
-  $('#trRemember').checked ? localStorage.setItem('dx_key', key) : localStorage.removeItem('dx_key');
+  lsSet('vl_key', $('#trRemember').checked ? key : '');
   S.p.translate = { model: $('#trModel').value.trim(), rules: $('#trRules').value, glossary: $('#trGloss').value };
   try {
     await api(`/api/p/${S.p.id}/translate`, { json: { api_key: key, ...S.p.translate, cues: S.p.cues, only_empty: $('#trOnlyEmpty').checked } });
@@ -466,10 +504,9 @@ async function preview() {
   const t = (c.start + c.end) / 2, n = ++S.pvN;
   $('#pvBusy').classList.add('show');
   try {
-    const r = await fetch(U(`/api/p/${S.p.id}/preview`), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ t, settings: S.p.settings, cues: S.p.cues }) });
-    if (!r.ok) throw new Error((await r.json()).error || 'Lỗi xem thử');
+    const r = await api(`/api/p/${S.p.id}/preview`, { json: { t, settings: S.p.settings, cues: S.p.cues } });
     const blob = await r.blob(); if (n !== S.pvN) return;
-    const img = $('#frame4'); img.src = URL.createObjectURL(blob); img.classList.add('ready'); $('#skel4').classList.add('off');
+    const img = $('#frame4'); if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src); img.src = URL.createObjectURL(blob); img.classList.add('ready'); $('#skel4').classList.add('off');
   } catch (e) { toast(e.message, true); }
   if (n === S.pvN) $('#pvBusy').classList.remove('show');
 }
@@ -510,21 +547,37 @@ function burst() {
   })();
 }
 
-init();
 
 
 /* ---------------------------------------------------------------- hộp thoại kết nối */
-function showConnect(failed) {
+function connTip() {
+  if (LOCAL) return 'Bạn đang mở giao diện ngay trên máy xử lý nên không cần nhập địa chỉ.';
+  return `Chạy app trên máy tính (start.bat / start.sh) rồi để địa chỉ ${DEFAULT_SERVER}. Dùng trên điện thoại: chạy cloudflared tunnel trên máy tính rồi dán địa chỉ https://...trycloudflare.com và mã truy cập (README mục 9).`;
+}
+function showConnect(why) {
   const d = $('#dlgConn');
-  $('#connUrl').value = CFG.base || 'http://127.0.0.1:8765';
+  $('#connUrl').value = LOCAL ? location.origin : (CFG.base || DEFAULT_SERVER);
+  $('#connUrl').disabled = LOCAL;
   $('#connToken').value = CFG.token;
-  $('#connFail').hidden = !failed;
-  $('#connLocal').hidden = LOCAL;
+  const f = $('#connFail');
+  f.hidden = !why; f.textContent = why || ''; f.classList.add('bad'); f.classList.remove('good');
+  $('#connTip').textContent = connTip();
   if (!d.open) d.showModal();
 }
-$('#srvBtn').onclick = () => showConnect(false);
+$('#srvBtn').onclick = () => showConnect('');
+$('#connTest').onclick = async () => {
+  const b = $('#connTest'), f = $('#connFail');
+  b.disabled = true; b.textContent = 'Đang thử...';
+  const r = await probeServer(LOCAL ? '' : normBase($('#connUrl').value), $('#connToken').value.trim());
+  b.disabled = false; b.textContent = 'Thử kết nối';
+  f.hidden = false;
+  f.classList.toggle('bad', !r.ok); f.classList.toggle('good', r.ok);
+  f.textContent = r.ok ? `Kết nối được. ffmpeg ${r.status.ffmpeg ? 'có' : 'CHƯA có'}, Tesseract ${r.status.tesseract ? 'có' : 'CHƯA có'}.` : r.why;
+};
 $('#connGo').onclick = () => {
-  lsSet('vl_server', $('#connUrl').value.trim().replace(/\/+$/, ''));
+  if (!LOCAL) lsSet('vl_server', normBase($('#connUrl').value) || DEFAULT_SERVER);
   lsSet('vl_token', $('#connToken').value.trim());
   location.reload();
 };
+
+init();

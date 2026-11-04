@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 cd "$(dirname "$0")"
+export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-https://video-localization.vercel.app}"
 if ! command -v python3 >/dev/null 2>&1; then
   echo "Không tìm thấy python3. Hãy cài Python 3.10 trở lên."; exit 1
 fi

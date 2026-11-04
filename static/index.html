@@ -6,6 +6,7 @@
 <title>Video localization</title>
 <link rel="icon" href="/logo.png">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/mobile.css">
 </head>
 <body>
 <div class="bg" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -187,11 +188,11 @@
   <form method="dialog" class="dlg">
     <h2>Kết nối máy xử lý</h2>
     <p class="hint">Trang web này chỉ là giao diện. Việc quét OCR và xuất video (ffmpeg, Tesseract) chạy trên máy xử lý của bạn: app trên máy bạn, hoặc một server tự dựng bằng Docker.</p>
-    <p class="hint bad" id="connFail" hidden>Chưa kết nối được. Hãy bật app trên máy bạn (start.bat / start.sh) hoặc kiểm tra lại địa chỉ.</p>
-    <label>Địa chỉ máy xử lý<input type="text" id="connUrl" placeholder="http://127.0.0.1:8765"></label>
+    <p class="hint bad" id="connFail" hidden></p>
+    <label>Địa chỉ máy xử lý<input type="text" inputmode="url" id="connUrl" placeholder="http://127.0.0.1:8765" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <label>Mã truy cập (nếu server có đặt)<input type="password" id="connToken" autocomplete="off"></label>
-    <p class="hint" id="connLocal">Tải bản chạy trên máy ở mục Tải về của trang chủ nếu bạn chưa có.</p>
-    <div class="row end"><button value="cancel" class="btn ghost">Đóng</button><button value="go" class="btn primary" id="connGo">Kết nối</button></div>
+    <p class="hint" id="connTip"></p>
+    <div class="row end"><button value="cancel" class="btn ghost" id="connClose">Đóng</button><button type="button" class="btn" id="connTest">Thử kết nối</button><button value="go" class="btn primary" id="connGo">Lưu và kết nối</button></div>
   </form>
 </dialog>
 

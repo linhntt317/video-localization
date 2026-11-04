@@ -13,7 +13,7 @@ from .util import Cancelled
 
 DEFAULTS = {
     "old": {"y0": 0.862, "fade": 0.07, "blur": 1.0},
-    "logo": {"enabled": True, "pos": "tr", "width": 0.0885, "opacity": 1.0, "margin": 0.0175, "file": "dauxanh_logo.png"},
+    "logo": {"enabled": True, "pos": "tr", "width": 0.0885, "opacity": 1.0, "margin": 0.0175, "file": "logo.png"},
     "corner": {"enabled": True, "text": "ĐẬU XANH STUDIO", "pos": "tl", "size": 0.0556, "opacity": 0.5,
                "serif": True, "margin": 0.0175},
     "fly": {"enabled": True, "text": "ĐẬU XANH STUDIO", "size": 0.05, "opacity": 0.3, "speed": 1.0, "serif": True},
@@ -259,9 +259,12 @@ def prepare_assets(jobdir, cfg, info, project_dir):
     lg = cfg["logo"]
     if lg["enabled"]:
         src = None
-        for cand in (os.path.join(project_dir, "assets", lg.get("file") or ""),
-                     os.path.join(util.ASSET_DIR, lg.get("file") or "")):
-            if lg.get("file") and os.path.isfile(cand):
+        name = os.path.basename(lg.get("file") or "")
+        if name == "dauxanh_logo.png":  # tên cũ của logo mặc định
+            name = "logo.png"
+        for cand in (os.path.join(project_dir, "assets", name),
+                     os.path.join(util.ASSET_DIR, name)):
+            if name and os.path.isfile(cand):
                 src = cand
                 break
         if src:
