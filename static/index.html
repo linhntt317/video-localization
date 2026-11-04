@@ -106,6 +106,17 @@
           </div>
           <label class="chk"><input type="checkbox" id="o_ref" checked> Đọc cả dòng đối chiếu (bỏ tick để quét nhanh hơn khoảng 2 lần)</label>
         </details>
+        <div class="asrbox">
+          <label class="chk"><input type="checkbox" id="o_asr"> Đối chiếu bằng giọng nói (Whisper) ngay sau khi quét OCR</label>
+          <div id="o_asr_opts" hidden>
+            <div class="advgrid">
+              <label>Mô hình Whisper<select id="o_asr_model"></select></label>
+              <label>Ngôn ngữ nói<select id="o_asr_lang"><option value="">Tự nhận</option><option value="zh">Trung</option><option value="en">Anh</option><option value="ja">Nhật</option><option value="ko">Hàn</option><option value="vi">Việt</option></select></label>
+            </div>
+            <label class="chk"><input type="checkbox" id="o_asr_add"> Tự thêm các đoạn vẫn thiếu bằng chữ Whisper (có nhãn "từ Whisper")</label>
+            <p class="hint" id="o_asr_hint"></p>
+          </div>
+        </div>
         <button class="btn primary big" id="ocrBtn"><span class="spinner"></span><span class="lbl">Quét OCR</span></button>
         <div class="prog" id="ocrProg" hidden>
           <div class="bar"><i></i></div><div class="progrow"><span class="pm"></span><b class="pp">0%</b></div>

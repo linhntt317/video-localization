@@ -45,5 +45,7 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 
 - Whisper (`studio/asr.py`, faster-whisper, `requirements-asr.txt` tuỳ chọn; Colab tự cài): `POST /api/p/<pid>/asr` lưu `project["asr"]={model,lang,segments}`; giao diện đối chiếu với câu OCR (dung sai 0,4s), đánh dấu đoạn nghi sót, thêm câu (`asr:true`), quét lại OCR theo `ranges` (`/rescan`). `asr.LOADER` thay được khi kiểm thử. **Chưa chạy được Whisper thật** (sandbox chặn tải mô hình từ Hugging Face): chỉ kiểm thử bằng mô hình giả; GPU/cuDNN trên Colab cũng chưa kiểm tra.
 
+- `POST /api/p/<pid>/ocr` nhận `ocr.asr={on,model,lang,add}`: OCR (0-50%) → Whisper (50-80%) → `ocr_ranges` quét lại OCR các đoạn `asr_uncovered` với ngưỡng thấp (80-97%) → tuỳ chọn thêm câu Whisper (`asr:true`). Lỗi Whisper chỉ ghi `result.asr_error`, không mất kết quả OCR. Đã kiểm thử bằng mô hình giả (`asr.LOADER`).
+
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.

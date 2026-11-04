@@ -442,6 +442,29 @@ def _mc(o):
     return 40.0 if v == 55 else v
 
 
+def asr_uncovered(cues, segs):
+    """Đoạn có tiếng nói (theo Whisper) mà không có câu nào tương ứng (dung sai 0,4s). Giống logic ở giao diện."""
+    out = []
+    for g in segs or []:
+        d = g["end"] - g["start"]
+        if d < 0.4 or len((g.get("text") or "").strip()) < 2:
+            continue
+        need = min(0.3, d * 0.5)
+        if not any(min(c["end"] + 0.4, g["end"]) - max(c["start"] - 0.4, g["start"]) >= need for c in cues):
+            out.append(g)
+    return out
+
+
+def ocr_ranges(p, ranges, task, p0, p1, thr, min_conf, seg_min):
+    """Quét OCR nhiều đoạn, tiến độ trải từ p0 đến p1. Trả về danh sách câu tìm được."""
+    o, found = p["ocr"], []
+    for i, (a, b) in enumerate(ranges):
+        found += ocr.run_ocr(p["video"], p["info"], p["bands"], p.get("primary", 0), fps=max(6.0, float(o.get("fps", 6))),
+                             t0=a, t1=b, thr=thr, min_conf=min_conf, seg_min=seg_min, ref=bool(o.get("ref", True)), task=task,
+                             cb=(lambda pr, msg, i=i: task.set(p0 + (p1 - p0) * (i + pr) / len(ranges), f"Quét lại đoạn nghi sót {i + 1}/{len(ranges)}")))
+    return found
+
+
 @app.post("/api/p/<pid>/ocr")
 def run_ocr(pid):
     p = load(pid)
@@ -452,17 +475,57 @@ def run_ocr(pid):
     p["bands"], p["primary"], p["ocr"] = bands, primary, o
     save(p)
 
+    wh = (o.get("asr") or {}) if isinstance(o.get("asr"), dict) else {}
+    use_asr = bool(wh.get("on")) and asr.available() and p["info"].get("has_audio", True)
+
     def work(task):
         task.set(0.0, "Bắt đầu quét")
+        sc = 0.5 if use_asr else 1.0  # phần tiến độ dành cho OCR chính
         cues = ocr.run_ocr(p["video"], p["info"], bands, primary, fps=float(o.get("fps", 6)),
                            t0=float(o.get("t0") or 0), t1=(float(o["t1"]) if o.get("t1") else None),
                            thr=int(o.get("thr", 210)), min_conf=_mc(o),
                            seg_min=float(o.get("seg_min", 55)), ref=bool(o.get("ref", True)),
-                           task=task, cb=task.set)
+                           task=task, cb=lambda pr, msg: task.set(pr * sc, msg))
         q = load(pid)
         q["cues"] = cues
         save(q)
         task.result = {"cues": len(cues)}
+        if not use_asr:
+            if wh.get("on"):
+                task.result["asr_error"] = ("Máy xử lý chưa cài Whisper (faster-whisper)." if not asr.available() else "Video không có âm thanh.")
+            return
+        # --- đối chiếu bằng Whisper ngay sau khi quét ---
+        try:
+            task.set(0.5, "Whisper đang nghe video để đối chiếu")
+            model = wh.get("model") if wh.get("model") in asr.MODELS else asr.default_model()
+            segs, got = asr.transcribe(p["video"], float(p["info"]["duration"]), model, (wh.get("lang") or None), task=task,
+                                       cb=lambda pr, msg: task.set(0.5 + 0.3 * pr, "Whisper: " + msg))
+            q = load(pid)
+            q["asr"] = {"model": model, "lang": got, "segments": segs}
+            miss = asr_uncovered(q["cues"], segs)
+            task.result.update(segments=len(segs), missing=len(miss), rescanned=0)
+            if miss:
+                found = ocr_ranges(q, [(max(0.0, g["start"] - 0.3), min(float(p["info"]["duration"]), g["end"] + 0.3)) for g in miss[:300]],
+                                   task, 0.8, 0.97, max(120, int(o.get("thr", 210)) - 20), 30.0, 45.0)
+                q["cues"], added = merge_cues(q["cues"], found)
+                task.result["rescanned"] = added
+                miss = asr_uncovered(q["cues"], segs)
+                task.result["missing"] = len(miss)
+            if miss and wh.get("add"):
+                for g in miss:
+                    q["cues"].append({"id": 0, "start": g["start"], "end": g["end"], "src": g["text"], "ref": "", "vi": "", "asr": True})
+                q["cues"].sort(key=lambda c: c["start"])
+                for i, c in enumerate(q["cues"], 1):
+                    c["id"] = i
+                task.result["added_whisper"] = len(miss)
+                task.result["missing"] = 0
+            task.result["cues"] = len(q["cues"])
+            save(q)
+        except Cancelled:
+            raise
+        except Exception as e:  # noqa  (lỗi Whisper không được làm mất kết quả OCR đã có)
+            traceback.print_exc()
+            task.result["asr_error"] = str(e)
 
     if not start_task(pid, "ocr", work):
         return err("Đang có tác vụ khác chạy.", 409)

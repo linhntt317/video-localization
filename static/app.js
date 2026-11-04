@@ -301,12 +301,28 @@ function enter2() {
   const sl = $('#tSlider'); sl.max = p.info.duration.toFixed(1);
   if (!S.t2) S.t2 = Math.min(p.info.duration * 0.3, p.info.duration);
   sl.value = S.t2; $('#tOut').textContent = fmt(S.t2);
-  $('#o_fps').value = o.fps; $('#o_t0').value = o.t0 || ''; $('#o_t1').value = o.t1 || ''; $('#o_thr').value = o.thr; $('#o_seg').value = o.seg_min ?? 55; $('#o_ref').checked = o.ref !== false;
+  $('#o_fps').value = o.fps; $('#o_t0').value = o.t0 || ''; $('#o_t1').value = o.t1 || ''; $('#o_thr').value = o.thr; $('#o_seg').value = o.seg_min ?? 55; $('#o_ref').checked = o.ref !== false; initOcrAsr();
   renderBands(); showFrame2();
 }
 const showFrame2 = debounce(() => loadImg($('#frame'), $('#skel'), frameUrl(S.t2)), 120);
 $('#tSlider').addEventListener('input', e => { S.t2 = +e.target.value; $('#tOut').textContent = fmt(S.t2); showFrame2(); });
 $$('[data-seek]').forEach(b => b.onclick = () => { S.t2 = Math.max(0, Math.min(S.p.info.duration, S.t2 + +b.dataset.seek)); $('#tSlider').value = S.t2; $('#tOut').textContent = fmt(S.t2); showFrame2(); });
+function initOcrAsr() {
+  const st = S.status.asr || {}, w = S.p.ocr.asr || {}, sel = $('#o_asr_model');
+  if (!sel.options.length) sel.innerHTML = (st.models || []).map(m => `<option value="${m}">${m}${m === st.default_model ? ' (đề nghị)' : ''}</option>`).join('');
+  sel.value = w.model || st.default_model || 'small';
+  $('#o_asr_lang').value = w.lang || '';
+  $('#o_asr').checked = !!w.on && !!st.available; $('#o_asr').disabled = !st.available;
+  $('#o_asr_add').checked = !!w.add;
+  $('#o_asr_opts').hidden = !$('#o_asr').checked;
+  $('#o_asr_hint').textContent = !st.available ? 'Máy xử lý chưa cài Whisper (Colab: chạy lại ô cài đặt mới nhất; máy tính: pip install -r requirements-asr.txt).'
+    : `Whisper nghe video, thấy chỗ có người nói mà chưa có câu thì tự quét lại OCR đúng chỗ đó với ngưỡng thấp hơn. Máy này dùng ${st.device === 'cuda' ? 'GPU (nhanh)' : 'CPU (chậm, nên chọn tiny/base/small)'}; lần đầu phải tải mô hình.`;
+}
+function saveOcrAsr() {
+  S.p.ocr.asr = { on: $('#o_asr').checked, model: $('#o_asr_model').value, lang: $('#o_asr_lang').value, add: $('#o_asr_add').checked };
+  $('#o_asr_opts').hidden = !$('#o_asr').checked; save();
+}
+['o_asr', 'o_asr_model', 'o_asr_lang', 'o_asr_add'].forEach(id => $('#' + id).addEventListener('change', saveOcrAsr));
 $('#o_ref').addEventListener('change', e => { S.p.ocr.ref = e.target.checked; save(); });
 ['fps', 't0', 't1', 'thr', 'seg'].forEach(k => $('#o_' + k).addEventListener('input', e => {
   const v = e.target.value === '' ? null : +e.target.value;
@@ -381,7 +397,12 @@ $('#ocrBtn').onclick = async () => {
 };
 async function onOcrDone(t) {
   S.p = await api('/api/p/' + S.p.id);
-  toast(`Đã quét được ${t.result?.cues ?? S.p.cues.length} câu`);
+  const r = t.result || {};
+  toast(`Đã quét được ${r.cues ?? S.p.cues.length} câu`);
+  if (r.segments != null) {
+    toast(`Whisper nghe được ${r.segments} đoạn. Quét lại OCR thêm ${r.rescanned || 0} câu${r.added_whisper ? `, thêm ${r.added_whisper} câu từ Whisper` : ''}; ${r.missing ? `còn ${r.missing} đoạn có tiếng mà chưa có câu (xem hàng đỏ ở bước 3)` : 'không còn đoạn nào bị sót'}.`, !!r.missing);
+  }
+  if (r.asr_error) toast('Đối chiếu Whisper không chạy được: ' + r.asr_error + ' (kết quả OCR vẫn được giữ).', true);
   S.maxStep = 3; setStep(3);
 }
 
