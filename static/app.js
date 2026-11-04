@@ -440,6 +440,8 @@ $('#addCue').onclick = () => {
   renumber(); S.cur = S.p.cues.length - 1; renderCues(S.cur); updateStat(); save();
   $('#cues').lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
+$('#expBtn').onclick = e => { e.stopPropagation(); $('#expBtn').parentElement.classList.toggle('open'); };
+document.addEventListener('click', e => { if (!e.target.closest('.menu')) $$('.menu.open').forEach(m => m.classList.remove('open')); });
 $('#expVi').onclick = async e => { e.preventDefault(); await save(true); location.href = U(`/api/p/${S.p.id}/srt/vi`); };
 $('#expSrc').onclick = async e => { e.preventDefault(); await save(true); location.href = U(`/api/p/${S.p.id}/srt/src`); };
 
