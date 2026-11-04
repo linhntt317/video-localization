@@ -25,6 +25,14 @@ LOCK = threading.Lock()
 # ---------------------------------------------------------------- truy cập từ trang web bên ngoài
 # ALLOWED_ORIGINS: danh sách origin được gọi API, cách nhau bằng dấu phẩy ("*" = mọi nơi, cần ACCESS_TOKEN).
 # ACCESS_TOKEN: nếu đặt, mọi lệnh /api phải kèm mã (header X-Access-Token hoặc ?token=).
+# MEDIA_DIR: thư mục chứa video có sẵn trên máy xử lý (hiện danh sách để chọn, không cần tải lên).
+# EXPORT_DIR: video xuất xong được chép thêm vào đây (vd. thư mục Google Drive).
+# BACKUP_DIR: mỗi lần lưu, project.json được sao lưu vào đây và tự khôi phục khi khởi động lại.
+MEDIA_DIR = os.environ.get("MEDIA_DIR", "").strip()
+MEDIA_SRC = os.environ.get("MEDIA_SRC", "").strip()  # nguồn (vd. Drive): tự chép video mới sang MEDIA_DIR cho đọc nhanh
+EXPORT_DIR = os.environ.get("EXPORT_DIR", "").strip()
+BACKUP_DIR = os.environ.get("BACKUP_DIR", "").strip()
+VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".ts", ".flv", ".wmv")
 ALLOWED = [o.strip().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 TOKEN = os.environ.get("ACCESS_TOKEN", "")
 
@@ -73,6 +81,41 @@ def save(p):
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(p, f, ensure_ascii=False, indent=1)
         os.replace(tmp, os.path.join(PROJ_DIR, p["id"], "project.json"))
+    if BACKUP_DIR:
+        threading.Thread(target=_backup, args=(p["id"],), daemon=True).start()
+
+
+def _backup(pid):
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        with LOCK:
+            shutil.copyfile(os.path.join(PROJ_DIR, pid, "project.json"), os.path.join(BACKUP_DIR, pid + ".json"))
+    except Exception:  # noqa
+        pass
+
+
+def restore_backups():
+    """Khôi phục dự án từ BACKUP_DIR (dùng khi máy xử lý bị reset, ví dụ Colab ngắt kết nối)."""
+    if not BACKUP_DIR or not os.path.isdir(BACKUP_DIR):
+        return
+    for fn in os.listdir(BACKUP_DIR):
+        pid = fn[:-5]
+        if fn.endswith(".json") and re.fullmatch(r"[a-f0-9]{10}", pid) and not os.path.isdir(os.path.join(PROJ_DIR, pid)):
+            try:
+                os.makedirs(os.path.join(PROJ_DIR, pid, "assets"), exist_ok=True)
+                shutil.copyfile(os.path.join(BACKUP_DIR, fn), os.path.join(PROJ_DIR, pid, "project.json"))
+                print("  Đã khôi phục dự án", pid)
+            except Exception:  # noqa
+                pass
+
+
+def media_path(rel):
+    """Đổi tên file trong MEDIA_DIR thành đường dẫn thật, chặn thoát khỏi thư mục."""
+    if not MEDIA_DIR:
+        return None
+    base = os.path.realpath(MEDIA_DIR)
+    f = os.path.realpath(os.path.join(base, rel))
+    return f if f.startswith(base + os.sep) and os.path.isfile(f) else None
 
 
 def err(msg, code=400):
@@ -125,7 +168,10 @@ def start_task(pid, kind, fn):
 # ---------------------------------------------------------------- trang & trạng thái
 @app.get("/")
 def index():
-    return app.send_static_file("index.html")
+    # Giao diện do chính máy xử lý phục vụ: báo cho app.js biết để gọi API cùng địa chỉ.
+    html = open(os.path.join(app.static_folder, "index.html"), encoding="utf-8").read()
+    html = html.replace("<head>", "<head>\n<script>window.VL_EMBEDDED=1</script>", 1)
+    return Response(html, mimetype="text/html", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/logo.png")
@@ -141,7 +187,72 @@ def status():
         "tesseract": bool(util.tesseract_bin()), "langs": langs, "libass": util.has_filter("ass"),
         "fonts": sorted(render.list_fonts().keys()), "defaults": render.DEFAULTS,
         "default_rules": translate.DEFAULT_RULES, "default_model": translate.DEFAULT_MODEL,
+        "media": bool(MEDIA_DIR), "export_dir": EXPORT_DIR,
     })
+
+
+SYNC = {"running": False, "file": "", "done": 0, "total": 0, "error": ""}
+
+
+def _sync_media():
+    SYNC.update(running=True, file="", done=0, total=0, error="")
+    try:
+        os.makedirs(MEDIA_DIR, exist_ok=True)
+        todo = []
+        for root, _, files in os.walk(MEDIA_SRC):
+            if root[len(MEDIA_SRC):].count(os.sep) > 2:
+                continue
+            for fn in files:
+                if fn.lower().endswith(VIDEO_EXT):
+                    src = os.path.join(root, fn)
+                    rel = os.path.relpath(src, MEDIA_SRC)
+                    dst = os.path.join(MEDIA_DIR, rel)
+                    if not os.path.isfile(dst) or os.path.getsize(dst) != os.path.getsize(src):
+                        todo.append((src, dst))
+        SYNC["total"] = sum(os.path.getsize(a) for a, _ in todo)
+        for src, dst in todo:
+            SYNC["file"] = os.path.basename(src)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            with open(src, "rb") as fi, open(dst + ".part", "wb") as fo:
+                while True:
+                    b = fi.read(16 << 20)
+                    if not b:
+                        break
+                    fo.write(b)
+                    SYNC["done"] += len(b)
+            os.replace(dst + ".part", dst)
+    except Exception as e:  # noqa
+        traceback.print_exc()
+        SYNC["error"] = str(e)
+    SYNC["running"] = False
+
+
+def start_sync():
+    if MEDIA_SRC and MEDIA_DIR and not SYNC["running"]:
+        SYNC["running"] = True
+        threading.Thread(target=_sync_media, daemon=True).start()
+
+
+@app.get("/api/media")
+def list_media():
+    out = []
+    if MEDIA_DIR and os.path.isdir(MEDIA_DIR):
+        base = os.path.realpath(MEDIA_DIR)
+        for root, _, files in os.walk(base):
+            if root[len(base):].count(os.sep) > 2:
+                continue
+            for fn in files:
+                if fn.lower().endswith(VIDEO_EXT):
+                    f = os.path.join(root, fn)
+                    out.append({"name": os.path.relpath(f, base), "size": os.path.getsize(f), "mtime": os.path.getmtime(f)})
+    out.sort(key=lambda x: x["mtime"], reverse=True)
+    return jsonify({"files": out, "sync": SYNC, "can_sync": bool(MEDIA_SRC)})
+
+
+@app.post("/api/media/sync")
+def media_sync():
+    start_sync()
+    return jsonify(SYNC)
 
 
 @app.get("/api/projects")
@@ -173,7 +284,10 @@ def create_project():
             path = os.path.join(d, "source" + ext)
             f.save(path)
         else:
-            path = (request.get_json(silent=True) or {}).get("path", "").strip().strip('"')
+            body = request.get_json(silent=True) or {}
+            path = body.get("path", "").strip().strip('"')
+            if body.get("media"):
+                path = media_path(body["media"]) or ""
             if not path or not os.path.isfile(path):
                 shutil.rmtree(d, ignore_errors=True)
                 return err("Không tìm thấy file video theo đường dẫn đã nhập.")
@@ -202,6 +316,11 @@ def get_project(pid):
 def delete_project(pid):
     shutil.rmtree(pdir(pid), ignore_errors=True)
     TASKS.pop(pid, None)
+    if BACKUP_DIR:
+        try:
+            os.remove(os.path.join(BACKUP_DIR, pid + ".json"))
+        except OSError:
+            pass
     return jsonify({"ok": True})
 
 
@@ -382,10 +501,39 @@ def run_render(pid):
         open(os.path.join(pdir(pid), "subs_vi.srt"), "w", encoding="utf-8").write(srt.dump(q["cues"], "vi"))
         open(os.path.join(pdir(pid), "subs_src.srt"), "w", encoding="utf-8").write(srt.dump(q["cues"], "src"))
         task.result = {"file": os.path.basename(out), "size": os.path.getsize(out)}
+        if EXPORT_DIR:
+            task.result["export"] = export_copy(q, pdir(pid), out, task)
 
     if not start_task(pid, "render", work):
         return err("Đang có tác vụ khác chạy.", 409)
     return jsonify({"ok": True})
+
+
+def export_copy(p, d, out, task):
+    """Chép video và SRT đã xuất sang EXPORT_DIR (vd. Google Drive). Lỗi chép không làm hỏng bản xuất."""
+    try:
+        safe = re.sub(r'[\\/:*?"<>|]+', "_", p["name"]).strip() or p["id"]
+        dst = os.path.join(EXPORT_DIR, safe + "_vi.mp4")
+        os.makedirs(EXPORT_DIR, exist_ok=True)
+        total = os.path.getsize(out)
+        done = 0
+        task.set(0.99, "Đang chép video vào thư mục lưu trữ...")
+        with open(out, "rb") as fi, open(dst, "wb") as fo:
+            while True:
+                b = fi.read(8 << 20)
+                if not b:
+                    break
+                fo.write(b)
+                done += len(b)
+                task.set(0.99, f"Đang chép vào thư mục lưu trữ {done * 100 // max(1, total)}%")
+        for name, suffix in (("subs_vi.srt", "_vi.srt"), ("subs_src.srt", "_goc.srt")):
+            f = os.path.join(d, name)
+            if os.path.isfile(f):
+                shutil.copyfile(f, os.path.join(EXPORT_DIR, safe + suffix))
+        return dst
+    except Exception as e:  # noqa
+        traceback.print_exc()
+        return ""
 
 
 @app.get("/api/p/<pid>/task")
@@ -428,6 +576,8 @@ def main():
     if host != "127.0.0.1" and not TOKEN:
         raise SystemExit("Mở server ra ngoài (HOST khác 127.0.0.1) thì bắt buộc đặt ACCESS_TOKEN.")
     url = f"http://127.0.0.1:{port}"
+    restore_backups()
+    start_sync()
     print("\n  Video localization đang chạy tại", url, "\n  (đóng cửa sổ này để tắt)\n")
     if os.environ.get("NO_BROWSER") != "1":
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()

@@ -34,6 +34,13 @@
     <div class="grid2">
       <div class="card rise" style="--i:0">
         <h2>Tạo dự án mới</h2>
+        <div id="mediaBox" hidden>
+          <h3>Video có sẵn trên máy xử lý (khuyên dùng cho video dài)</h3>
+          <div id="mediaList" class="projects"></div>
+          <p class="hint" id="mediaSync" hidden></p>
+          <button class="btn mini" id="mediaRefresh" type="button">Làm mới danh sách</button>
+          <div class="or"><span>hoặc tải video lên (dưới ~100 MB)</span></div>
+        </div>
         <label class="drop" id="drop">
           <input type="file" id="file" accept="video/*" hidden>
           <svg viewBox="0 0 48 48" class="dropicon"><path d="M24 32V10m0 0-9 9m9-9 9 9M8 32v6a2 2 0 0 0 2 2h28a2 2 0 0 0 2-2v-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -141,6 +148,7 @@
             <a class="btn" id="dlVi" href="#">SRT Việt</a>
             <a class="btn" id="dlSrc" href="#">SRT gốc</a>
           </div>
+          <p class="hint good" id="exportHint" hidden></p>
           <h3>Kiểm tra chuẩn YouTube</h3>
           <ul class="checks" id="checks"></ul>
         </div>

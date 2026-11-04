@@ -6,7 +6,7 @@ const LANGS = { eng: 'Tiếng Anh', chi_sim: 'Trung giản thể', chi_tra: 'Tru
 
 
 /* ---------------------------------------------------------------- địa chỉ máy xử lý */
-const LOCAL = ['127.0.0.1', 'localhost', '[::1]', ''].includes(location.hostname);
+const LOCAL = !!window.VL_EMBEDDED || ['127.0.0.1', 'localhost', '[::1]', ''].includes(location.hostname);
 const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
 const lsSet = (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) { } };
 const DEFAULT_SERVER = 'http://127.0.0.1:8765';
@@ -177,7 +177,33 @@ async function init() {
 }
 
 /* ---------------------------------------------------------------- bước 1 */
+const mb = n => n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB' : Math.max(1, Math.round(n / 1048576)) + ' MB';
+let mediaPoll = null;
+async function loadMedia(sync = false) {
+  const box = $('#mediaBox');
+  if (!S.status?.media) { box.hidden = true; return; }
+  box.hidden = false;
+  if (sync === true) await api('/api/media/sync', { method: 'POST' }).catch(() => { });
+  const r = await api('/api/media').catch(() => ({ files: [], sync: {} }));
+  const sy = r.sync || {};
+  $('#mediaList').innerHTML = r.files.length ? r.files.map((m, i) => `<div class="proj" data-media="${esc(m.name)}" style="--i:${i}"><b>${esc(m.name)}</b><small>${mb(m.size)}</small></div>`).join('')
+    : '<div class="empty">Chưa có video nào.' + (r.can_sync ? '<br>Hãy tải video vào thư mục Drive <b>video-localization/videos</b> rồi bấm "Làm mới".' : '') + '</div>';
+  const st = $('#mediaSync');
+  st.hidden = !sy.running && !sy.error;
+  st.textContent = sy.error ? 'Lỗi chép video: ' + sy.error : `Đang chép từ Drive: ${sy.file || '...'} (${mb(sy.done || 0)} / ${mb(sy.total || 0)})`;
+  $('#mediaRefresh').hidden = !r.can_sync;
+  clearTimeout(mediaPoll);
+  if (sy.running) mediaPoll = setTimeout(() => loadMedia(), 2000);
+}
+$('#mediaRefresh').onclick = () => loadMedia(true);
+$('#mediaList').addEventListener('click', async e => {
+  const c = e.target.closest('[data-media]'); if (!c || c.classList.contains('busy')) return;
+  c.classList.add('busy');
+  try { S.p = await api('/api/projects', { json: { media: c.dataset.media } }); S.maxStep = 2; toast('Đã tạo dự án'); setStep(2); }
+  catch (err) { toast(err.message, true); } finally { c.classList.remove('busy'); }
+});
 async function loadProjects() {
+  loadMedia();
   const list = await api('/api/projects').catch(() => []);
   const box = $('#projects');
   if (!list.length) { box.innerHTML = '<div class="empty">Chưa có dự án nào.<br>Hãy chọn video ở bên cạnh để bắt đầu.</div>'; return; }
@@ -203,6 +229,14 @@ async function openProject(id) {
   S.p = await api('/api/p/' + id);
   S.maxStep = S.p.cues.length ? 3 : 2;
   S.cur = 0;
+  /* nếu đang có tác vụ chạy nền (vd. điện thoại khoá màn hình lúc đang quét/xuất) thì nối lại thanh tiến độ */
+  const t = await api(`/api/p/${id}/task`).catch(() => null);
+  const R = { ocr: [2, '#ocrProg', onOcrDone, '#ocrBtn'], translate: [3, '#trProg', onTrDone, '#trBtn'], render: [4, '#rdProg', onRenderDone, '#renderBtn'] }[t?.kind];
+  if (t?.state === 'running' && R) {
+    S.maxStep = 4; setStep(R[0]);
+    setTimeout(() => runTask($(R[1]), R[2], $(R[3])), 300);
+    return;
+  }
   setStep(S.p.cues.length ? 3 : 2);
 }
 const drop = $('#drop');
@@ -320,12 +354,13 @@ $('#ocrBtn').onclick = async () => {
     await save(true);
     await api(`/api/p/${S.p.id}/ocr`, { json: { bands: S.p.bands, primary: S.p.primary, ocr: S.p.ocr } });
   } catch (e) { return toast(e.message, true); }
-  runTask($('#ocrProg'), async t => {
-    S.p = await api('/api/p/' + S.p.id);
-    toast(`Đã quét được ${t.result?.cues ?? S.p.cues.length} câu`);
-    S.maxStep = 3; setStep(3);
-  }, b);
+  runTask($('#ocrProg'), onOcrDone, b);
 };
+async function onOcrDone(t) {
+  S.p = await api('/api/p/' + S.p.id);
+  toast(`Đã quét được ${t.result?.cues ?? S.p.cues.length} câu`);
+  S.maxStep = 3; setStep(3);
+}
 
 /* ---------------------------------------------------------------- bước 3 */
 function enter3() { renderCues(); updateStat(); }
@@ -403,11 +438,12 @@ $('#dlgTr').addEventListener('close', async () => {
   try {
     await api(`/api/p/${S.p.id}/translate`, { json: { api_key: key, ...S.p.translate, cues: S.p.cues, only_empty: $('#trOnlyEmpty').checked } });
   } catch (e) { return toast(e.message, true); }
-  runTask($('#trProg'), async t => {
-    S.p = await api('/api/p/' + S.p.id); renderCues(); updateStat();
-    toast(t.result?.missing ? `Xong, còn ${t.result.missing} câu chưa dịch được` : 'Đã dịch xong toàn bộ');
-  }, $('#trBtn'));
+  runTask($('#trProg'), onTrDone, $('#trBtn'));
 });
+async function onTrDone(t) {
+  S.p = await api('/api/p/' + S.p.id); renderCues(); updateStat();
+  toast(t.result?.missing ? `Xong, còn ${t.result.missing} câu chưa dịch được` : 'Đã dịch xong toàn bộ');
+}
 /* nhập SRT */
 $('#impBtn').onclick = () => { $('#impText').value = ''; $('#impFile').value = ''; $('#dlgImp').showModal(); };
 $('#impFile').onchange = async e => { const f = e.target.files[0]; if (f) $('#impText').value = await f.text(); };
@@ -483,6 +519,8 @@ function buildSettings() {
 }
 function enter4() {
   buildSettings();
+  const h = $('#exportHint');
+  if (S.status.export_dir) { h.hidden = false; h.textContent = 'Video xuất xong cũng được chép tự động vào: ' + S.status.export_dir; } else h.hidden = true;
   const sel = $('#pvCue');
   sel.innerHTML = S.p.cues.map((c, i) => `<option value="${i}">Câu #${c.id} · ${fmt(c.start)}</option>`).join('') || '<option value="-1">Không có câu</option>';
   sel.value = Math.min(S.cur, S.p.cues.length - 1);
@@ -526,12 +564,15 @@ $('#renderBtn').onclick = async () => {
   try { await api(`/api/p/${S.p.id}/render`, { json: { cues: S.p.cues, settings: S.p.settings } }); }
   catch (e) { return toast(e.message, true); }
   $('#resultCard').hidden = true;
-  runTask($('#rdProg'), async () => {
-    toast('Xuất video xong!'); burst();
-    const r = await api(`/api/p/${S.p.id}/check`).catch(() => ({ checks: [] }));
-    showResult(r.checks, true);
-  }, b);
+  runTask($('#rdProg'), onRenderDone, b);
 };
+async function onRenderDone(t) {
+  toast('Xuất video xong!'); burst();
+  const r = await api(`/api/p/${S.p.id}/check`).catch(() => ({ checks: [] }));
+  showResult(r.checks, true);
+  const h = $('#exportHint');
+  if (t?.result?.export) { h.hidden = false; h.textContent = 'Đã lưu bản xuất vào: ' + t.result.export + '. Với video lớn, tải từ app Google Drive nhanh và ổn định hơn tải qua trang web.'; }
+}
 function showResult(checks, scroll) {
   const id = S.p.id, card = $('#resultCard');
   const v = $('#player'); v.src = U(`/api/p/${id}/final?_=${Date.now()}`);

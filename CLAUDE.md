@@ -22,10 +22,13 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 - Luồng đầy đủ khi giao diện ở origin khác máy xử lý (giống Vercel → 127.0.0.1) + ACCESS_TOKEN: tải video, dò vùng sub, OCR (eng), nhập SRT, xem thử, xuất MP4 đạt mọi mục kiểm tra YouTube.
 - Hộp "Máy xử lý": nút Thử kết nối, báo lỗi cụ thể (sai token, CORS/ALLOWED_ORIGINS, http từ trang https, Safari/iOS).
 
-## Máy xử lý trên điện thoại (Colab)
-- `colab.ipynb`: cài ffmpeg/Tesseract, clone repo, dự án lưu Drive, chạy app + cloudflared, in link `SITE/?server=<tunnel>&token=<mã>`. `app.js` đọc `?server=&token=` rồi lưu localStorage và xoá khỏi URL.
-- `static/logo.png` là bản sao `assets/logo.png` để Vercel (root dir `static`) có logo.
-- Deploy Vercel: lần thử `create_deployment` gitSource báo `git_info_fail` vì Vercel (hanvubang16-3091) chưa kết nối repo linhntt317/video-localization → cần kết nối repo trong Vercel (Root Directory = `static`) hoặc dán file inline.
+## Máy xử lý trên điện thoại (Colab) — cách chính cho người dùng chỉ có điện thoại
+- `colab.ipynb`: cài ffmpeg/Tesseract, gắn Drive (`video-localization/{videos,exports,backup}`), clone repo, chạy app + cloudflared, in link `<tunnel>/?token=<mã>`. Không cần Vercel: Flask tự phục vụ giao diện và chèn `window.VL_EMBEDDED=1` để `app.js` gọi API cùng origin.
+- Env mới trong `app.py`: `MEDIA_DIR` (+ `MEDIA_SRC` tự chép từ Drive sang ổ Colab, `/api/media`, `/api/media/sync`), `EXPORT_DIR` (chép bản xuất + SRT), `BACKUP_DIR` (sao lưu/khôi phục project.json). Tạo dự án từ `{"media": "ten.mp4"}`.
+- `app.js`: `openProject` nối lại thanh tiến độ nếu có tác vụ đang chạy; `?server=&token=` vẫn dùng được cho trang Vercel.
+- Cloudflare quick tunnel giới hạn upload ~100 MB và request ~100 s → video lớn phải đi qua Drive, không upload trực tiếp.
+- Vercel: lần thử `create_deployment` gitSource báo `git_info_fail` (Vercel hanvubang16-3091 chưa kết nối repo linhntt317/video-localization) và đã ghi Root Directory=`static` vào project. Bản Vercel hiện cũ, không còn cần cho luồng Colab.
+- Chưa chạy được trên Colab thật (chỉ giả lập thư mục Drive trên Linux).
 
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.

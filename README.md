@@ -133,10 +133,17 @@ Lưu ý: tải video lên qua tunnel miễn phí bị giới hạn khoảng 100 
 
 Sau khi sửa `static/`, chạy `./build_site.sh` để tạo thư mục `site/` (đã minify bằng esbuild, kèm logo), rồi `./build_site.sh --deploy` (cần `vercel login`, chọn project `video-localization`).
 
-### Chỉ có điện thoại: dùng Google Colab làm máy xử lý
+### Chỉ có điện thoại: dùng Google Colab làm máy xử lý (khuyên dùng, kể cả video 2-4 GB)
 
-Không cần máy tính hay VPS. Mở `colab.ipynb` (trong repo này) bằng Google Colab, chạy lần lượt 3 ô; ô cuối in ra một link dạng `https://video-localization.vercel.app/?server=...&token=...`. Mở link đó trên điện thoại: trang tự lưu địa chỉ và mã truy cập rồi kết nối luôn.
+Không cần máy tính, VPS hay Vercel. Mở `colab.ipynb` bằng Google Colab, chạy lần lượt 3 ô. Ô cuối in ra một link dạng `https://xxxx.trycloudflare.com/?token=...`: mở link đó trên điện thoại là dùng ngay (giao diện do chính máy xử lý phục vụ, không bị chặn http/https hay CORS).
 
-- Giữ tab Colab chạy trong lúc làm việc. Colab miễn phí tự ngắt sau vài giờ; khi đó chạy lại ô cuối để lấy link mới.
-- Dự án và video lưu trong Google Drive (thư mục `video-localization`) nên không mất khi Colab ngắt. Video lớn: để lên Drive rồi dán đường dẫn `/content/drive/MyDrive/video-localization/ten.mp4` ở bước 1 (tunnel miễn phí giới hạn ~100 MB mỗi lần tải lên).
-- Link chứa mã truy cập: đừng chia sẻ cho người khác.
+Quy trình với video dài:
+1. Trong app Google Drive trên điện thoại, tải video vào **video-localization/videos** (ô 2 tự tạo thư mục).
+2. Mở link, ở bước 1 bấm **Làm mới danh sách**: app tự chép video từ Drive sang ổ đĩa nhanh của Colab (có hiện tiến độ). Chọn video trong danh sách để tạo dự án.
+3. Quét OCR, dịch, xuất. Nếu điện thoại khoá màn hình giữa chừng, mở lại link và bấm vào dự án: thanh tiến độ tự nối lại, tác vụ vẫn chạy nền trên Colab.
+4. Video và SRT xuất xong được chép tự động vào **Drive ▸ video-localization/exports**; tải từ app Drive (ổn định hơn tải 2-4 GB qua trang web).
+5. Dự án được sao lưu vào **Drive ▸ video-localization/backup** mỗi lần lưu và tự khôi phục khi chạy lại ô 3.
+
+Giới hạn: giữ tab Colab mở và ô 3 đang chạy; Colab miễn phí tự ngắt sau vài giờ (chạy lại ô 3 lấy link mới, video phải chép lại từ Drive). Colab miễn phí chỉ có CPU nên xuất video dài mất nhiều thời gian; chọn chất lượng "Nhanh". Link chứa mã truy cập, đừng chia sẻ.
+
+Biến môi trường dùng cho cách này (tự đặt trong notebook): `MEDIA_DIR` (thư mục video để chọn), `MEDIA_SRC` (nguồn tự chép sang `MEDIA_DIR`), `EXPORT_DIR` (nơi chép bản xuất), `BACKUP_DIR` (sao lưu project.json).
