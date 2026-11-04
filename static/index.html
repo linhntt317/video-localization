@@ -41,6 +41,18 @@
           <button class="btn mini" id="mediaRefresh" type="button">Làm mới danh sách</button>
           <div class="or"><span>hoặc tải video lên (dưới ~100 MB)</span></div>
         </div>
+        <div class="urlbox">
+          <h3>Dán link video (link trực tiếp hoặc Google Drive)</h3>
+          <div class="row">
+            <input type="text" id="urlIn" placeholder="https://..." inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false">
+            <button class="btn primary" id="urlBtn" type="button">Tải về</button>
+          </div>
+          <div class="prog" id="urlProg" hidden>
+            <div class="bar"><i></i></div><div class="progrow"><span class="pm"></span><b class="pp"></b></div>
+            <button class="btn mini danger" id="urlCancel" type="button">Huỷ</button>
+          </div>
+          <div class="or"><span>hoặc</span></div>
+        </div>
         <label class="drop" id="drop">
           <input type="file" id="file" accept="video/*" hidden>
           <svg viewBox="0 0 48 48" class="dropicon"><path d="M24 32V10m0 0-9 9m9-9 9 9M8 32v6a2 2 0 0 0 2 2h28a2 2 0 0 0 2-2v-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>

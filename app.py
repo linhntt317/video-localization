@@ -271,6 +271,89 @@ def list_projects():
     return jsonify(out)
 
 
+def _project_dict(pid, name, path, info):
+    d_bands = [
+        {"name": "Dòng 1", "y0": 0.865, "y1": 0.935, "lang": "chi_sim"},
+        {"name": "Dòng 2", "y0": 0.935, "y1": 0.995, "lang": "eng"},
+    ]
+    return {"id": pid, "name": os.path.splitext(name)[0], "video": path, "info": info, "bands": d_bands, "primary": 1,
+            "ocr": {"fps": 6, "t0": 0, "t1": None, "thr": 210, "min_conf": 55}, "cues": [], "settings": {},
+            "translate": {"model": translate.DEFAULT_MODEL, "rules": translate.DEFAULT_RULES, "glossary": ""}}
+
+
+# ---------------------------------------------------------------- tải video từ link (link trực tiếp hoặc Google Drive)
+DL = {"state": "idle", "message": "", "done": 0, "total": 0, "pid": None, "error": "", "cancel": False}
+
+
+def _download(url):
+    import urllib.parse
+    import urllib.request
+    DL.update(state="running", message="Đang bắt đầu tải", done=0, total=0, pid=None, error="", cancel=False)
+    pid = uuid.uuid4().hex[:10]
+    d = os.path.join(PROJ_DIR, pid)
+    os.makedirs(os.path.join(d, "assets"), exist_ok=True)
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+        if host.endswith("drive.google.com") or host.endswith("docs.google.com"):
+            import gdown
+            DL["message"] = "Đang tải từ Google Drive (không hiện tiến độ)"
+            out = gdown.download(url=url, output=os.path.join(d, "source_dl"), quiet=True, fuzzy=True)
+            if not out or not os.path.isfile(out):
+                raise RuntimeError("Không tải được từ Google Drive. Hãy đặt file ở chế độ 'Bất kỳ ai có đường liên kết'.")
+            name = os.path.basename(out)
+            path = out
+        else:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                DL["total"] = int(r.headers.get("Content-Length") or 0)
+                cd = r.headers.get("Content-Disposition") or ""
+                m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)', cd)
+                name = os.path.basename(urllib.parse.unquote(m.group(1))) if m else os.path.basename(urllib.parse.unquote(urllib.parse.urlparse(url).path)) or "video.mp4"
+                ext = os.path.splitext(name)[1].lower()
+                if ext not in VIDEO_EXT:
+                    name = (os.path.splitext(name)[0] or "video") + ".mp4"
+                path = os.path.join(d, "source" + os.path.splitext(name)[1].lower())
+                DL["message"] = "Đang tải video về máy xử lý"
+                with open(path, "wb") as fo:
+                    while True:
+                        if DL["cancel"]:
+                            raise RuntimeError("Đã huỷ")
+                        b = r.read(8 << 20)
+                        if not b:
+                            break
+                        fo.write(b)
+                        DL["done"] += len(b)
+        info = util.probe(path)
+        save(_project_dict(pid, name, path, info))
+        DL.update(state="done", pid=pid, message="Xong")
+    except Exception as e:  # noqa
+        shutil.rmtree(d, ignore_errors=True)
+        DL.update(state="error", error=str(e) or "Tải lỗi")
+
+
+@app.post("/api/import_url")
+def import_url():
+    url = ((request.get_json(silent=True) or {}).get("url") or "").strip()
+    if not re.match(r"https?://", url, re.I):
+        return err("Link phải bắt đầu bằng http:// hoặc https://")
+    if DL["state"] == "running":
+        return err("Đang tải một video khác.", 409)
+    DL["state"] = "running"
+    threading.Thread(target=_download, args=(url,), daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/import_url")
+def import_url_status():
+    return jsonify({k: v for k, v in DL.items() if k != "cancel"})
+
+
+@app.post("/api/import_url/cancel")
+def import_url_cancel():
+    DL["cancel"] = True
+    return jsonify({"ok": True})
+
+
 @app.post("/api/projects")
 def create_project():
     pid = uuid.uuid4().hex[:10]
@@ -296,13 +379,7 @@ def create_project():
     except Exception as e:  # noqa
         shutil.rmtree(d, ignore_errors=True)
         return err(str(e))
-    d_bands = [
-        {"name": "Dòng 1", "y0": 0.865, "y1": 0.935, "lang": "chi_sim"},
-        {"name": "Dòng 2", "y0": 0.935, "y1": 0.995, "lang": "eng"},
-    ]
-    p = {"id": pid, "name": os.path.splitext(name)[0], "video": path, "info": info, "bands": d_bands, "primary": 1,
-         "ocr": {"fps": 6, "t0": 0, "t1": None, "thr": 210, "min_conf": 55}, "cues": [], "settings": {},
-         "translate": {"model": translate.DEFAULT_MODEL, "rules": translate.DEFAULT_RULES, "glossary": ""}}
+    p = _project_dict(pid, name, path, info)
     save(p)
     return jsonify(p)
 

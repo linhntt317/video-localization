@@ -239,6 +239,28 @@ async function openProject(id) {
   }
   setStep(S.p.cues.length ? 3 : 2);
 }
+/* tải video về máy xử lý từ link: hợp với video lớn vì không phải đi qua trình duyệt điện thoại */
+let urlPoll = null;
+$('#urlBtn').onclick = async () => {
+  const url = $('#urlIn').value.trim(); if (!url) return toast('Hãy dán link video', true);
+  try { await api('/api/import_url', { json: { url } }); } catch (e) { return toast(e.message, true); }
+  const root = $('#urlProg'), bar = $('.bar i', root), pm = $('.pm', root), pp = $('.pp', root);
+  root.hidden = false; $('#urlBtn').disabled = true;
+  $('#urlCancel').onclick = () => api('/api/import_url/cancel', { method: 'POST' });
+  clearInterval(urlPoll);
+  const tick = async () => {
+    let t; try { t = await api('/api/import_url'); } catch (e) { return; }
+    const f = t.total ? t.done / t.total : 0;
+    bar.style.width = (f * 100).toFixed(1) + '%';
+    pm.textContent = t.message || '...';
+    pp.textContent = t.total ? `${mb(t.done)} / ${mb(t.total)}` : (t.done ? mb(t.done) : '');
+    if (t.state === 'running') return;
+    clearInterval(urlPoll); $('#urlBtn').disabled = false; root.hidden = true;
+    if (t.state === 'error') return toast(t.error || 'Tải lỗi', true);
+    if (t.state === 'done' && t.pid) { S.p = await api('/api/p/' + t.pid); S.maxStep = 2; $('#urlIn').value = ''; toast('Đã tạo dự án'); setStep(2); }
+  };
+  urlPoll = setInterval(tick, 1000); tick();
+};
 const drop = $('#drop');
 ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));

@@ -1,3 +1,13 @@
+---
+title: Video localization
+emoji: 🎬
+colorFrom: green
+colorTo: blue
+sdk: docker
+app_port: 8765
+pinned: false
+---
+
 # Video localization
 
 Web app chạy trên máy của bạn: từ một video có sub cứng (Trung, Anh...) làm ra video sub tiếng Việt, có logo, watermark, và xuất đúng chuẩn đăng YouTube.
@@ -147,3 +157,20 @@ Quy trình với video dài:
 Giới hạn: giữ tab Colab mở và ô 3 đang chạy; Colab miễn phí tự ngắt sau vài giờ (chạy lại ô 3 lấy link mới, video phải chép lại từ Drive). Colab miễn phí chỉ có CPU nên xuất video dài mất nhiều thời gian; chọn chất lượng "Nhanh". Link chứa mã truy cập, đừng chia sẻ.
 
 Biến môi trường dùng cho cách này (tự đặt trong notebook): `MEDIA_DIR` (thư mục video để chọn), `MEDIA_SRC` (nguồn tự chép sang `MEDIA_DIR`), `EXPORT_DIR` (nơi chép bản xuất), `BACKUP_DIR` (sao lưu project.json).
+
+### Chạy miễn phí 24/7 trên Hugging Face Spaces (không cần máy tính, không cần thẻ)
+
+Đầu file này có sẵn phần cấu hình Space. Cách làm (đều làm được trên trình duyệt điện thoại):
+
+1. Tạo tài khoản tại huggingface.co. Bấm **New Space**: đặt tên (ví dụ `video-localization`), SDK chọn **Docker → Blank**, phần cứng **CPU basic (free)**. Chọn **Private** nếu không muốn người lạ thấy trang.
+2. Trong Space vừa tạo, vào **Settings → Variables and secrets → New secret**: tên `ACCESS_TOKEN`, giá trị là mật khẩu bạn tự đặt (bắt buộc, vì app mở ra ngoài).
+3. Tạo token ghi: avatar → **Settings → Access Tokens → Create new token** (loại Write).
+4. Trên GitHub, repo `linhntt317/video-localization` → **Settings → Secrets and variables → Actions → New repository secret**, thêm 3 secret: `HF_TOKEN` (token ở bước 3), `HF_USER` (tên tài khoản Hugging Face), `HF_SPACE` (tên Space ở bước 1).
+5. Vào tab **Actions** của repo, chọn workflow **Sync to Hugging Face Space** → **Run workflow**. Từ đó mỗi lần push, Space tự cập nhật. Space build lần đầu mất vài phút.
+6. Mở địa chỉ `https://<HF_USER>-<HF_SPACE>.hf.space/?token=<ACCESS_TOKEN>` trên điện thoại (dùng đúng địa chỉ `.hf.space`, không dùng trang huggingface.co/spaces/... vì bị bọc khung).
+
+Giới hạn của gói miễn phí (từ tài liệu của Hugging Face, cần tự xác nhận hiện tại):
+- Ổ đĩa **không giữ lâu**: khi Space khởi động lại, dự án và video biến mất. Hãy tải video xuất về máy ngay khi xong, và đừng coi Space là nơi lưu trữ.
+- Space **tự ngủ** khi lâu không có ai dùng và chạy lại khi có người mở (mất vài phút).
+- Video 2-4 GB: đừng tải lên qua trình duyệt. Đặt video lên Google Drive (chia sẻ "Bất kỳ ai có đường liên kết") hoặc một link trực tiếp, rồi dán link vào ô **Dán link video** ở bước 1; máy xử lý tự tải về.
+- Chỉ có CPU nên video dài xuất chậm; chọn chất lượng "Nhanh".
