@@ -277,7 +277,7 @@ def _project_dict(pid, name, path, info):
         {"name": "Dòng 2", "y0": 0.935, "y1": 0.995, "lang": "eng"},
     ]
     return {"id": pid, "name": os.path.splitext(name)[0], "video": path, "info": info, "bands": d_bands, "primary": 1,
-            "ocr": {"fps": 6, "t0": 0, "t1": None, "thr": 210, "min_conf": 55}, "cues": [], "settings": {},
+            "ocr": {"fps": 6, "t0": 0, "t1": None, "thr": 210, "min_conf": 40}, "cues": [], "settings": {},
             "translate": {"model": translate.DEFAULT_MODEL, "rules": translate.DEFAULT_RULES, "glossary": ""}}
 
 
@@ -435,6 +435,12 @@ def detect(pid):
 
 
 # ---------------------------------------------------------------- OCR
+def _mc(o):
+    """Ngưỡng độ tin cậy từng khung. Dự án cũ lưu mặc định 55 (quá chặt, hay làm rớt câu) thì dùng 40."""
+    v = float(o.get("min_conf", 40))
+    return 40.0 if v == 55 else v
+
+
 @app.post("/api/p/<pid>/ocr")
 def run_ocr(pid):
     p = load(pid)
@@ -449,8 +455,8 @@ def run_ocr(pid):
         task.set(0.0, "Bắt đầu quét")
         cues = ocr.run_ocr(p["video"], p["info"], bands, primary, fps=float(o.get("fps", 6)),
                            t0=float(o.get("t0") or 0), t1=(float(o["t1"]) if o.get("t1") else None),
-                           thr=int(o.get("thr", 210)), min_conf=float(o.get("min_conf", 55)),
-                           seg_min=float(o.get("seg_min", 72)),
+                           thr=int(o.get("thr", 210)), min_conf=_mc(o),
+                           seg_min=float(o.get("seg_min", 55)),
                            task=task, cb=task.set)
         q = load(pid)
         q["cues"] = cues

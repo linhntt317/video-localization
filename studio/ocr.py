@@ -40,7 +40,9 @@ def detect_bands(video, info, samples=20):
             continue
         h = len(raw) // (960 * 3)
         img = np.frombuffer(raw[: h * 960 * 3], np.uint8).reshape(h, 960, 3)
-        mask = (img.min(2) >= 215).astype(np.uint8)
+        g = cv2.medianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 3)
+        top = g.astype(np.int16) - cv2.morphologyEx(g, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))).astype(np.int16)
+        mask = ((top >= 45) & (g >= 90)).astype(np.uint8)
         blobs = cv2.dilate(cv2.erode(mask, k9), k9)
         text = mask & (1 - blobs)
         rows = text.sum(1).astype(np.float32)
@@ -92,6 +94,15 @@ def detect_bands(video, info, samples=20):
     return lines
 
 
+def _ocr_best(pngs, lang, tess):
+    best = ("", 0.0)
+    for png in pngs:
+        r = _ocr_png(png, lang, tess)
+        if r[0] and r[1] > best[1]:
+            best = r
+    return best
+
+
 def _ocr_png(png, lang, tess):
     env = dict(os.environ, OMP_THREAD_LIMIT="1")
     out = subprocess.run([tess, "stdin", "stdout", "-l", lang, "--psm", "7", "tsv"], input=png,
@@ -114,11 +125,42 @@ def _ocr_png(png, lang, tess):
     return text, float(np.mean(confs))
 
 
-def _prep_png(mask):
-    img = np.where(mask > 0, 0, 255).astype(np.uint8)
-    if img.shape[0] < 70:
-        img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
-        img = np.where(img < 128, 0, 255).astype(np.uint8)
+def _text_mask(sub, thr):
+    """Mặt nạ chữ sáng theo độ tương phản cục bộ (top-hat), không phụ thuộc chữ phải trắng tuyệt đối:
+    chữ hơi xám, đang mờ dần, bị nén hay nằm trên nền sáng vẫn được giữ; mảng sáng lớn của nền bị loại.
+    thr (mặc định 210) càng thấp càng nhạy."""
+    g = cv2.medianBlur(cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY), 3)  # giảm nhiễu nén
+    k = max(7, int(round(sub.shape[0] * 0.2)) | 1)
+    top = g.astype(np.int16) - cv2.morphologyEx(g, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))).astype(np.int16)
+    t = int(np.clip(thr - 165, 15, 100))
+    cand = ((top >= t) & (g >= 90)).astype(np.uint8)
+    if cand.sum() < 12:
+        return cand, cand * 255
+    # trong vùng khoanh được, chỉ giữ ruột sáng nhất của nét chữ (bỏ viền sáng/mờ quanh chữ) bằng ngưỡng Otsu
+    reg = cv2.dilate(cand, np.ones((3, 3), np.uint8)) > 0
+    vals = g[reg].reshape(-1, 1)
+    o, _ = cv2.threshold(vals, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    o = max(float(o), float(np.percentile(vals, 95)) - 30.0)  # ruột chữ sáng gần bằng mức sáng cao nhất của chữ
+    m = (reg & (g >= o)).astype(np.uint8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+    small = np.isin(lab, [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] <= 4])
+    m[small] = 0  # bỏ đốm nhiễu
+    return m, np.clip(top * (255.0 / max(60.0, float(top[m > 0].max()) if m.any() else 60.0)), 0, 255).astype(np.uint8)
+
+
+def _prep_png(mask, soft=None):
+    """Ảnh chữ đen nền trắng cho Tesseract. soft: giữ độ mịn nét chữ (hợp chữ nhỏ/mờ); không có thì nhị phân."""
+    if soft is not None:
+        img = 255 - (soft * cv2.dilate(mask, np.ones((3, 3), np.uint8))).astype(np.uint8)
+        if img.shape[0] < 90:
+            f = 2 if img.shape[0] >= 45 else 3
+            img = cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+    else:
+        img = np.where(mask > 0, 0, 255).astype(np.uint8)
+    if soft is None and img.shape[0] < 70:
+        f = 2 if img.shape[0] >= 40 else 3
+        img = cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+        img = np.where(img < 140, 0, 255).astype(np.uint8)
     img = cv2.copyMakeBorder(img, 12, 12, 16, 16, cv2.BORDER_CONSTANT, value=255)
     ok, buf = cv2.imencode(".png", img)
     return buf.tobytes()
@@ -139,7 +181,7 @@ def _norm(s):
     return re.sub(r"[\W_]+", "", s.lower())
 
 
-def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_conf=55.0, seg_min=72.0, task=None, cb=None):
+def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_conf=40.0, seg_min=55.0, task=None, cb=None, debug=None):
     """bands: [{name,y0,y1,lang}]  (y theo tỉ lệ 0..1). primary: chỉ số dòng dùng để chia câu & dịch."""
     tess = util.tesseract_bin()
     if not tess:
@@ -155,8 +197,9 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
     for b in bands:
         a = int(round(b["y0"] * H))
         z = int(round(b["y1"] * H))
-        a = max(0, min(H - 4, a))
-        z = max(a + 4, min(H, z))
+        pad = max(2, int(round((z - a) * 0.12)))
+        a = max(0, min(H - 4, a - pad))
+        z = max(a + 4, min(H, z + pad))
         px.append((a, z))
     ymin = min(a for a, _ in px)
     ymax = max(z for _, z in px)
@@ -182,16 +225,21 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
         row = []
         for bi, (a, z) in enumerate(px):
             sub = img[a - ymin: z - ymin]
-            mask = (sub.min(2) >= thr).astype(np.uint8)
+            mask, soft = _text_mask(sub, thr)
             if mask.sum() < sub.shape[0] * sub.shape[1] * 0.002:
                 row.append(None)
                 last_key[bi] = None
                 continue
-            key = cv2.resize(mask * 255, (max(1, W // 8), max(1, sub.shape[0] // 8)), interpolation=cv2.INTER_AREA).astype(np.float32)
-            if last_key[bi] is not None and last_key[bi].shape == key.shape and float(np.abs(key - last_key[bi]).mean()) < 3.0:
+            key = cv2.resize(mask, (max(1, W // 3), max(1, sub.shape[0] // 3)), interpolation=cv2.INTER_AREA).astype(np.float32)
+            if (last_key[bi] is not None and last_key[bi].shape == key.shape
+                    and float(np.abs(key - last_key[bi]).sum()) / max(1.0, float(max(key.sum(), last_key[bi].sum()))) < 0.35):
                 row.append(last_job[bi])
             else:
-                jobs.append((bi, _prep_png(mask)))
+                pngs = [_prep_png(mask), _prep_png(mask, soft)]
+                white = (sub.min(2) >= thr).astype(np.uint8)  # cách cũ: chữ trắng tuyệt đối, sạch nét khi nền không sáng
+                if 0.002 < white.mean() < 0.25:
+                    pngs.append(_prep_png(white))
+                jobs.append((bi, pngs))
                 last_job[bi] = len(jobs) - 1
                 row.append(last_job[bi])
             last_key[bi] = key
@@ -205,7 +253,7 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
     done = 0
     workers = max(1, min(8, (os.cpu_count() or 2)))
     with cf.ThreadPoolExecutor(workers) as ex:
-        futs = {ex.submit(_ocr_png, png, bands[bi]["lang"], tess): j for j, (bi, png) in enumerate(jobs)}
+        futs = {ex.submit(_ocr_best, pngs, bands[bi]["lang"], tess): j for j, (bi, pngs) in enumerate(jobs)}
         for f in cf.as_completed(futs):
             if task is not None and task.cancel:
                 ex.shutdown(cancel_futures=True)
@@ -223,6 +271,9 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
         t = _clean(t)
         return (t, c) if (c >= min_conf and len(_norm(t)) >= 1) else ("", 0.0)
 
+    if debug is not None:
+        for fi in range(len(frames)):
+            debug.append((round(t0 + fi / fps, 2), frames[fi][primary], *(results[frames[fi][primary]] if frames[fi][primary] is not None and results[frames[fi][primary]] else ("", 0.0))))
     # Gom khung hình liên tiếp thành câu, dựa trên dòng chính
     segs, cur, empty_run = [], None, 0
     for fi in range(len(frames)):

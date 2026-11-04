@@ -35,5 +35,10 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 
 - Bước 3 có khung "Tìm và bổ sung câu bị sót": thanh thời gian + đánh dấu câu, gợi ý khoảng trống ≥3s, thêm câu tại điểm đang xem, quét lại một đoạn (`POST /api/p/<pid>/rescan`, `merge_cues` chỉ thêm câu không trùng >40%, không xoá câu cũ; ngưỡng mặc định hạ xuống conf 40 / seg 55).
 
+## OCR (studio/ocr.py) — đã đo bằng video tổng hợp 43 câu (chữ Trung+Anh, 2 dòng, câu 0,7-2,2s, nén H.264)
+- Lỗi cũ: chỉ coi pixel trắng ≥210 là chữ (chữ xám/mờ dần/nén/nền sáng hỏng: 0-21/43), so khung đổi câu bằng sai khác trung bình (câu mới giống câu cũ → dùng lại chữ cũ), ngưỡng tin cậy 55/72 làm rớt chữ khó, detect_bands cũng dùng ngưỡng 215 cố định.
+- Mới: `_text_mask` (top-hat + Otsu + ngưỡng gần mức sáng cao nhất của chữ), so khung bằng tỉ lệ hình dạng, đọc 3 phiên bản ảnh (thích nghi nhị phân/mịn + trắng cũ) rồi lấy conf cao nhất, nới dải 12%, mặc định min_conf 40 / seg_min 55. Kết quả (đúng/43): sạch 43, chữ nhỏ 40, xám 43, mờ dần 43, nền sáng 42, nén rất mạnh 24.
+- `thr` giờ là độ nhạy (thấp = nhạy hơn). Chưa kiểm tra trên video thật của người dùng.
+
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.

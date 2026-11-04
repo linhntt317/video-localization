@@ -101,7 +101,7 @@
             <label>Số khung/giây<input type="number" id="o_fps" min="2" max="15" step="1"></label>
             <label>Từ giây<input type="number" id="o_t0" min="0" step="0.5" placeholder="đầu"></label>
             <label>Đến giây<input type="number" id="o_t1" min="0" step="0.5" placeholder="cuối"></label>
-            <label>Ngưỡng chữ trắng<input type="number" id="o_thr" min="120" max="254" step="1"></label>
+            <label>Độ nhạy chữ (thấp = nhạy hơn)<input type="number" id="o_thr" min="120" max="254" step="1"></label>
             <label>Độ tin cậy tối thiểu<input type="number" id="o_seg" min="0" max="100" step="1"></label>
           </div>
         </details>
@@ -153,7 +153,7 @@
           <div class="advgrid">
             <label>Độ tin cậy tối thiểu<input type="number" id="rs_conf" min="0" max="100" value="40"></label>
             <label>Độ tin cậy cả câu<input type="number" id="rs_seg" min="0" max="100" value="55"></label>
-            <label>Ngưỡng chữ trắng<input type="number" id="rs_thr" min="120" max="254" value="210"></label>
+            <label>Độ nhạy chữ (thấp = nhạy hơn)<input type="number" id="rs_thr" min="120" max="254" value="210"></label>
           </div>
           <button class="btn primary big" id="rsBtn" type="button"><span class="spinner"></span><span class="lbl">Quét lại đoạn này</span></button>
           <div class="prog" id="rsProg" hidden>
