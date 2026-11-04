@@ -301,12 +301,13 @@ function enter2() {
   const sl = $('#tSlider'); sl.max = p.info.duration.toFixed(1);
   if (!S.t2) S.t2 = Math.min(p.info.duration * 0.3, p.info.duration);
   sl.value = S.t2; $('#tOut').textContent = fmt(S.t2);
-  $('#o_fps').value = o.fps; $('#o_t0').value = o.t0 || ''; $('#o_t1').value = o.t1 || ''; $('#o_thr').value = o.thr; $('#o_seg').value = o.seg_min ?? 55;
+  $('#o_fps').value = o.fps; $('#o_t0').value = o.t0 || ''; $('#o_t1').value = o.t1 || ''; $('#o_thr').value = o.thr; $('#o_seg').value = o.seg_min ?? 55; $('#o_ref').checked = o.ref !== false;
   renderBands(); showFrame2();
 }
 const showFrame2 = debounce(() => loadImg($('#frame'), $('#skel'), frameUrl(S.t2)), 120);
 $('#tSlider').addEventListener('input', e => { S.t2 = +e.target.value; $('#tOut').textContent = fmt(S.t2); showFrame2(); });
 $$('[data-seek]').forEach(b => b.onclick = () => { S.t2 = Math.max(0, Math.min(S.p.info.duration, S.t2 + +b.dataset.seek)); $('#tSlider').value = S.t2; $('#tOut').textContent = fmt(S.t2); showFrame2(); });
+$('#o_ref').addEventListener('change', e => { S.p.ocr.ref = e.target.checked; save(); });
 ['fps', 't0', 't1', 'thr', 'seg'].forEach(k => $('#o_' + k).addEventListener('input', e => {
   const v = e.target.value === '' ? null : +e.target.value;
   S.p.ocr[k === 'seg' ? 'seg_min' : k] = v; save();

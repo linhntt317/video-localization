@@ -94,12 +94,15 @@ def detect_bands(video, info, samples=20):
     return lines
 
 
-def _ocr_best(pngs, lang, tess):
+def _ocr_best(pngs, lang, tess, enough=86.0):
+    """Đọc lần lượt các phiên bản ảnh, dừng sớm khi đã đủ chắc chắn (tiết kiệm phần lớn thời gian quét)."""
     best = ("", 0.0)
     for png in pngs:
         r = _ocr_png(png, lang, tess)
         if r[0] and r[1] > best[1]:
             best = r
+        if best[1] >= enough and len(best[0]) >= 3:
+            break
     return best
 
 
@@ -181,7 +184,7 @@ def _norm(s):
     return re.sub(r"[\W_]+", "", s.lower())
 
 
-def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_conf=40.0, seg_min=55.0, task=None, cb=None, debug=None):
+def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_conf=40.0, seg_min=55.0, task=None, cb=None, debug=None, ref=True):
     """bands: [{name,y0,y1,lang}]  (y theo tỉ lệ 0..1). primary: chỉ số dòng dùng để chia câu & dịch."""
     tess = util.tesseract_bin()
     if not tess:
@@ -224,6 +227,9 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
         img = np.frombuffer(buf, np.uint8).reshape(crop_h, W, 3)
         row = []
         for bi, (a, z) in enumerate(px):
+            if not ref and bi != primary:  # bỏ dòng đối chiếu cho nhanh
+                row.append(None)
+                continue
             sub = img[a - ymin: z - ymin]
             mask, soft = _text_mask(sub, thr)
             if mask.sum() < sub.shape[0] * sub.shape[1] * 0.002:
@@ -235,10 +241,11 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
                     and float(np.abs(key - last_key[bi]).sum()) / max(1.0, float(max(key.sum(), last_key[bi].sum()))) < 0.35):
                 row.append(last_job[bi])
             else:
-                pngs = [_prep_png(mask), _prep_png(mask, soft)]
-                white = (sub.min(2) >= thr).astype(np.uint8)  # cách cũ: chữ trắng tuyệt đối, sạch nét khi nền không sáng
+                pngs = []
+                white = (sub.min(2) >= thr).astype(np.uint8)  # chữ trắng tuyệt đối: sạch nét nhất khi nền không sáng
                 if 0.002 < white.mean() < 0.25:
                     pngs.append(_prep_png(white))
+                pngs += [_prep_png(mask), _prep_png(mask, soft)]
                 jobs.append((bi, pngs))
                 last_job[bi] = len(jobs) - 1
                 row.append(last_job[bi])

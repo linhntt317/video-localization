@@ -456,7 +456,7 @@ def run_ocr(pid):
         cues = ocr.run_ocr(p["video"], p["info"], bands, primary, fps=float(o.get("fps", 6)),
                            t0=float(o.get("t0") or 0), t1=(float(o["t1"]) if o.get("t1") else None),
                            thr=int(o.get("thr", 210)), min_conf=_mc(o),
-                           seg_min=float(o.get("seg_min", 55)),
+                           seg_min=float(o.get("seg_min", 55)), ref=bool(o.get("ref", True)),
                            task=task, cb=task.set)
         q = load(pid)
         q["cues"] = cues
@@ -506,6 +506,7 @@ def run_rescan(pid):
         cues = ocr.run_ocr(p["video"], p["info"], p["bands"], p.get("primary", 0), fps=max(6.0, float(o.get("fps", 6))),
                            t0=t0, t1=t1, thr=int(body.get("thr", o.get("thr", 210))),
                            min_conf=float(body.get("min_conf", 40)), seg_min=float(body.get("seg_min", 55)),
+                           ref=bool(o.get("ref", True)),
                            task=task, cb=task.set)
         q = load(pid)
         q["cues"], added = merge_cues(q["cues"], cues)
