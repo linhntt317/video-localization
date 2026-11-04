@@ -340,3 +340,55 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
     if cb:
         cb(1.0, f"Xong: {len(cues)} câu")
     return cues
+
+
+def probe_frame(video, info, bands, primary, t, thr=210, min_conf=40.0, seg_min=55.0):
+    """Chẩn đoán một khung hình: với từng dải trả về ảnh cắt, ảnh chữ tách được, chữ đọc ra, độ tin cậy và lý do bị bỏ (nếu có)."""
+    import base64
+    tess = util.tesseract_bin()
+    if not tess:
+        raise RuntimeError("Không tìm thấy Tesseract OCR.")
+    W, H = info["width"], info["height"]
+    cmd = [util.need_ffmpeg(), "-v", "error", "-nostdin", "-ss", f"{max(0.0, t):.3f}", "-i", video, "-frames:v", "1",
+           "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+    raw = subprocess.run(cmd, capture_output=True, creationflags=util.NOWINDOW).stdout
+    if len(raw) < W * H * 3:
+        raise RuntimeError("Không đọc được khung hình tại thời điểm này.")
+    img = np.frombuffer(raw[: W * H * 3], np.uint8).reshape(H, W, 3)
+    out = []
+    for bi, b in enumerate(bands):
+        a, z = int(round(b["y0"] * H)), int(round(b["y1"] * H))
+        pad = max(2, int(round((z - a) * 0.12)))
+        a = max(0, min(H - 4, a - pad))
+        z = max(a + 4, min(H, z + pad))
+        sub = img[a:z]
+        mask, soft = _text_mask(sub, thr)
+        pres = float(mask.mean())
+        item = {"name": b["name"], "lang": b["lang"], "primary": bi == primary, "presence": round(pres * 100, 2), "text": "", "conf": 0.0}
+
+        def enc(arr, w=720):
+            f = min(1.0, w / arr.shape[1])
+            if f < 1:
+                arr = cv2.resize(arr, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+            ok, buf = cv2.imencode(".png", arr)
+            return "data:image/png;base64," + base64.b64encode(buf.tobytes()).decode()
+        item["crop"] = enc(sub)
+        item["mask"] = enc(np.where(mask > 0, 0, 255).astype(np.uint8))
+        if pres < 0.002:
+            item["reason"] = "no_text"
+        else:
+            pngs = []
+            white = (sub.min(2) >= thr).astype(np.uint8)
+            if 0.002 < white.mean() < 0.25:
+                pngs.append(_prep_png(white))
+            pngs += [_prep_png(mask), _prep_png(mask, soft)]
+            text, conf = _ocr_best(pngs, b["lang"], tess, enough=101.0)
+            item["text"], item["conf"] = _clean(text), round(conf, 1)
+            if not item["text"]:
+                item["reason"] = "unreadable"
+            elif conf < min_conf:
+                item["reason"] = "low_conf"
+            else:
+                item["reason"] = "ok"
+        out.append(item)
+    return out

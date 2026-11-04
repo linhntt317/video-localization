@@ -468,6 +468,19 @@ def run_ocr(pid):
     return jsonify({"ok": True})
 
 
+@app.post("/api/p/<pid>/probe")
+def probe_ocr(pid):
+    p = load(pid)
+    body = request.get_json(force=True)
+    o = p["ocr"]
+    try:
+        res = ocr.probe_frame(p["video"], p["info"], p["bands"], p.get("primary", 0), float(body.get("t", 0)),
+                              thr=int(o.get("thr", 210)), min_conf=_mc(o), seg_min=float(o.get("seg_min", 55)))
+    except Exception as e:  # noqa
+        return err(str(e), 500)
+    return jsonify({"bands": res, "min_conf": _mc(o), "seg_min": float(o.get("seg_min", 55))})
+
+
 def merge_cues(old, new):
     """Thêm các câu mới không trùng thời gian với câu cũ (trùng > 40% độ dài câu ngắn hơn thì bỏ). Trả về (danh sách, số câu thêm)."""
     out, added = list(old), 0

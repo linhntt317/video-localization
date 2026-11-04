@@ -40,5 +40,8 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 - Mới: `_text_mask` (top-hat + Otsu + ngưỡng gần mức sáng cao nhất của chữ), so khung bằng tỉ lệ hình dạng, đọc 3 phiên bản ảnh (thích nghi nhị phân/mịn + trắng cũ) rồi lấy conf cao nhất, nới dải 12%, mặc định min_conf 40 / seg_min 55. Kết quả (đúng/43): sạch 43, chữ nhỏ 40, xám 43, mờ dần 43, nền sáng 42, nén rất mạnh 24.
 - `thr` giờ là độ nhạy (thấp = nhạy hơn). Chưa kiểm tra trên video thật của người dùng.
 
+- Công cụ chẩn đoán: `POST /api/p/<pid>/probe` (`ocr.probe_frame`) + nút "Đọc thử khung này" ở bước 3: cho từng dải xem ảnh cắt, ảnh chữ tách được, chữ đọc ra, độ tin cậy và lý do bị bỏ (no_text/unreadable/low_conf/ok); có nút tạo câu từ chữ đọc được.
+- Tốc độ: Tesseract ~80% thời gian; `ocr.ref=false` (bỏ dòng đối chiếu) nhanh ~2,5 lần; `_ocr_best` dừng sớm khi conf ≥86.
+
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.

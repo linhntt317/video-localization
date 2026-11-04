@@ -541,6 +541,41 @@ async function onRescanDone(t) {
   toast(r.added ? `Đã thêm ${r.added} câu mới (tìm thấy ${r.found}, ${r.found - r.added} câu trùng bỏ qua)` : `Không tìm thấy câu mới${r.found ? ' (các câu tìm thấy đã có sẵn)' : ''}. Thử hạ "Độ tin cậy" hoặc thêm câu bằng tay.`, !r.added);
 }
 
+
+/* ---- chẩn đoán một khung hình ---- */
+const WHY = {
+  no_text: (r, pr) => ['bad', 'App KHÔNG thấy chữ trong dải này. Dải có thể đang lệch khỏi dòng chữ (xem ảnh "Dải quét": chữ phải nằm trọn bên trong), hoặc chữ quá mờ/không sáng hơn nền. Thử chỉnh dải ở bước 2 hoặc hạ "Độ nhạy chữ" (số thấp = nhạy hơn).'],
+  unreadable: () => ['bad', 'Thấy có nét nhưng Tesseract không đọc ra chữ. Thường do ngôn ngữ của dòng chọn sai (xem ô Ngôn ngữ ở bước 2), dải cắt sát chữ, hoặc chữ quá mờ.'],
+  low_conf: (r, pr) => ['bad', `Đọc ra chữ nhưng độ tin cậy ${r.conf} thấp hơn ngưỡng ${pr.min_conf}, nên bị loại. Hạ "Độ tin cậy" khi quét lại đoạn này, hoặc dùng nút bên dưới để tạo câu từ chữ này rồi sửa tay.`],
+  ok: (r, pr) => ['good', `Đọc được (tin cậy ${r.conf}). Nếu câu này vẫn không có trong danh sách thì có thể là ${r.primary ? 'câu quá ngắn/hiện chớp (dưới 0,25 giây) hoặc độ tin cậy trung bình cả câu dưới ' + pr.seg_min : 'đây là dòng đối chiếu, không phải dòng chính dùng để chia câu'}.`],
+};
+$('#fProbe').onclick = async () => {
+  const b = $('#fProbe'), out = $('#probeOut');
+  b.classList.add('busy'); b.disabled = true; out.innerHTML = '';
+  try {
+    await save(true);
+    const pr = await api(`/api/p/${S.p.id}/probe`, { json: { t: F.t } });
+    out.innerHTML = `<h3 style="margin-top:12px">Kết quả đọc thử tại ${fmt(F.t)}</h3>` + pr.bands.map((r, i) => {
+      const [cls, msg] = WHY[r.reason](r, pr);
+      return `<div class="pband"><h4>${esc(r.name)} <span class="tag">${esc(LANGS[r.lang] || r.lang)}</span>${r.primary ? '<span class="tag">dòng chính</span>' : ''}</h4>
+        <div class="why">Dải quét (ảnh cắt từ video):</div><img src="${r.crop}" alt="">
+        <div class="why">Chữ app tách được (đen trên trắng):</div><img src="${r.mask}" alt="">
+        <div class="ptxt">${r.text ? '“' + esc(r.text) + '”' : '<i>không đọc được chữ</i>'}</div>
+        <div class="why ${cls}">${msg}</div>
+        ${r.text ? `<button class="btn mini" type="button" data-mk="${i}">+ Tạo câu từ chữ này tại ${fmt(F.t)}</button>` : ''}</div>`;
+    }).join('');
+    out._res = pr.bands;
+  } catch (e) { toast(e.message, true); }
+  b.classList.remove('busy'); b.disabled = false;
+};
+$('#probeOut').addEventListener('click', e => {
+  const k = e.target.closest('[data-mk]'); if (!k) return;
+  const r = $('#probeOut')._res[+k.dataset.mk];
+  $('#fAdd').click();
+  const row = $('#cues').children[S.cur], ta = row && $('textarea.src', row);
+  if (ta) { ta.value = r.text; ta.dispatchEvent(new Event('input', { bubbles: true })); }
+});
+
 /* nhập SRT */
 $('#impBtn').onclick = () => { $('#impText').value = ''; $('#impFile').value = ''; $('#dlgImp').showModal(); };
 $('#impFile').onchange = async e => {
