@@ -129,6 +129,42 @@
       <div class="bar"><i></i></div><div class="progrow"><span class="pm"></span><b class="pp">0%</b></div>
       <button class="btn mini danger" data-cancel>Huỷ</button>
     </div>
+    <div class="card rise finder" style="--i:1">
+      <details class="grp" id="finder" open>
+        <summary>Tìm và bổ sung câu bị sót</summary>
+        <div class="grpbody">
+          <p class="hint">Vạch xanh là chỗ đã có câu. Kéo thanh tới chỗ còn thiếu, rồi thêm câu bằng tay hoặc quét lại đúng đoạn đó.</p>
+          <div class="tlbar" id="tlBar"><div id="tlSegs"></div><div id="tlRange"></div><i id="tlHead"></i></div>
+          <input type="range" id="fSlider" min="0" max="100" step="0.1">
+          <div class="row tl wrap">
+            <button class="btn mini" data-fseek="-5" type="button">−5s</button>
+            <button class="btn mini" data-fseek="-1" type="button">−1s</button>
+            <button class="btn mini" data-fseek="1" type="button">+1s</button>
+            <button class="btn mini" data-fseek="5" type="button">+5s</button>
+            <output id="fOut">0:00</output>
+          </div>
+          <div class="viewer"><div class="skeleton" id="skel5"></div><img id="frame5" alt=""></div>
+          <div class="row wrap">
+            <button class="btn primary" id="fAdd" type="button">+ Thêm câu tại đây</button>
+            <button class="btn" id="fSetA" type="button">Đặt điểm đầu</button>
+            <button class="btn" id="fSetB" type="button">Đặt điểm cuối</button>
+          </div>
+          <div class="hint" id="fRange">Chưa chọn đoạn: sẽ quét quanh điểm đang xem (từ −1,5s đến +2s).</div>
+          <div class="advgrid">
+            <label>Độ tin cậy tối thiểu<input type="number" id="rs_conf" min="0" max="100" value="40"></label>
+            <label>Độ tin cậy cả câu<input type="number" id="rs_seg" min="0" max="100" value="55"></label>
+            <label>Ngưỡng chữ trắng<input type="number" id="rs_thr" min="120" max="254" value="210"></label>
+          </div>
+          <button class="btn primary big" id="rsBtn" type="button"><span class="spinner"></span><span class="lbl">Quét lại đoạn này</span></button>
+          <div class="prog" id="rsProg" hidden>
+            <div class="bar"><i></i></div><div class="progrow"><span class="pm"></span><b class="pp">0%</b></div>
+            <button class="btn mini danger" data-cancel>Huỷ</button>
+          </div>
+          <h3 style="margin-top:14px">Khoảng trống nghi bị sót (từ 3 giây không có câu)</h3>
+          <div class="gaps" id="fGaps"></div>
+        </div>
+      </details>
+    </div>
     <div class="grid3">
       <div id="cues" class="cues"></div>
       <aside class="side card rise" style="--i:1">

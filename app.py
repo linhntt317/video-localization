@@ -462,6 +462,55 @@ def run_ocr(pid):
     return jsonify({"ok": True})
 
 
+def merge_cues(old, new):
+    """Thêm các câu mới không trùng thời gian với câu cũ (trùng > 40% độ dài câu ngắn hơn thì bỏ). Trả về (danh sách, số câu thêm)."""
+    out, added = list(old), 0
+    for n in new:
+        dn = max(0.05, n["end"] - n["start"])
+        dup = False
+        for e in old:
+            ov = min(e["end"], n["end"]) - max(e["start"], n["start"])
+            if ov > 0.4 * min(dn, max(0.05, e["end"] - e["start"])):
+                dup = True
+                break
+        if not dup:
+            out.append(n)
+            added += 1
+    out.sort(key=lambda c: c["start"])
+    for i, c in enumerate(out, 1):
+        c["id"] = i
+    return out, added
+
+
+@app.post("/api/p/<pid>/rescan")
+def run_rescan(pid):
+    """Quét lại OCR cho một đoạn thời gian, chỉ bổ sung câu mới, không xoá câu cũ."""
+    p = load(pid)
+    body = request.get_json(force=True)
+    t0 = max(0.0, float(body.get("t0", 0)))
+    t1 = min(float(body.get("t1", t0 + 3)), float(p["info"]["duration"]))
+    if t1 - t0 < 0.3:
+        return err("Đoạn cần quét quá ngắn.")
+    o = p["ocr"]
+    if "cues" in body:
+        p["cues"] = body["cues"]
+    save(p)
+
+    def work(task):
+        cues = ocr.run_ocr(p["video"], p["info"], p["bands"], p.get("primary", 0), fps=max(6.0, float(o.get("fps", 6))),
+                           t0=t0, t1=t1, thr=int(body.get("thr", o.get("thr", 210))),
+                           min_conf=float(body.get("min_conf", 40)), seg_min=float(body.get("seg_min", 55)),
+                           task=task, cb=task.set)
+        q = load(pid)
+        q["cues"], added = merge_cues(q["cues"], cues)
+        save(q)
+        task.result = {"found": len(cues), "added": added, "cues": len(q["cues"])}
+
+    if not start_task(pid, "rescan", work):
+        return err("Đang có tác vụ khác chạy.", 409)
+    return jsonify({"ok": True})
+
+
 # ---------------------------------------------------------------- dịch
 @app.post("/api/p/<pid>/translate")
 def run_translate(pid):

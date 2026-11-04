@@ -227,3 +227,11 @@ dialog::backdrop{background:rgba(2,8,5,.7);backdrop-filter:blur(6px);animation:f
 .toolbar{position:relative;z-index:30}
 .menu.open .menubox{opacity:1;transform:none;pointer-events:auto}
 .side{z-index:1}
+
+.tlbar{position:relative;height:20px;border-radius:10px;background:#0a1511;border:1px solid var(--line);overflow:hidden;margin:4px 0 6px}
+#tlSegs i{position:absolute;top:0;bottom:0;background:var(--accent);opacity:.65;min-width:2px}
+#tlRange{position:absolute;top:0;bottom:0;background:rgba(251,191,36,.3);border-left:2px solid var(--warm);border-right:2px solid var(--warm);display:none}
+#tlHead{position:absolute;top:0;bottom:0;width:3px;background:#fff;box-shadow:0 0 6px #fff;left:0}
+.finder .viewer{margin:10px 0}
+#fOut{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--mute)}
+.gaps{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}

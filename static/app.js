@@ -231,7 +231,7 @@ async function openProject(id) {
   S.cur = 0;
   /* nếu đang có tác vụ chạy nền (vd. điện thoại khoá màn hình lúc đang quét/xuất) thì nối lại thanh tiến độ */
   const t = await api(`/api/p/${id}/task`).catch(() => null);
-  const R = { ocr: [2, '#ocrProg', onOcrDone, '#ocrBtn'], translate: [3, '#trProg', onTrDone, '#trBtn'], render: [4, '#rdProg', onRenderDone, '#renderBtn'] }[t?.kind];
+  const R = { ocr: [2, '#ocrProg', onOcrDone, '#ocrBtn'], translate: [3, '#trProg', onTrDone, '#trBtn'], render: [4, '#rdProg', onRenderDone, '#renderBtn'], rescan: [3, '#rsProg', onRescanDone, '#rsBtn'] }[t?.kind];
   if (t?.state === 'running' && R) {
     S.maxStep = 4; setStep(R[0]);
     setTimeout(() => runTask($(R[1]), R[2], $(R[3])), 300);
@@ -385,7 +385,7 @@ async function onOcrDone(t) {
 }
 
 /* ---------------------------------------------------------------- bước 3 */
-function enter3() { renderCues(); updateStat(); }
+function enter3() { renderCues(); updateStat(); initFinder(); }
 function updateStat() {
   const n = S.p.cues.filter(c => (c.vi || '').trim()).length, el = $('#statDone');
   if (el.textContent !== String(n)) { el.textContent = n; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
@@ -394,6 +394,7 @@ function updateStat() {
 function renumber() { S.p.cues.forEach((c, i) => c.id = i + 1); }
 function renderCues(flashIdx = -1) {
   const box = $('#cues');
+  drawTimeline();
   if (!S.p.cues.length) { box.innerHTML = '<div class="card empty">Chưa có câu nào. Quay lại bước 2 để quét OCR hoặc bấm "Thêm câu".</div>'; return; }
   box.innerHTML = S.p.cues.map((c, i) => `
     <div class="cue ${i === S.cur ? 'sel' : ''} ${i === flashIdx ? 'flash' : ''}" data-i="${i}" style="--i:${i}">
@@ -416,6 +417,7 @@ $('#cues').addEventListener('input', e => {
   const c = S.p.cues[+row.dataset.i], k = e.target.dataset.k;
   if (k === 'start' || k === 'end') c[k] = parseT(e.target.value); else c[k] = e.target.value;
   if (k === 'vi') updateStat();
+  if (k === 'start' || k === 'end') drawTimeline();
   save();
 });
 $('#cues').addEventListener('change', e => { if (e.target.dataset.k === 'start' || e.target.dataset.k === 'end') e.target.value = fmt(S.p.cues[+e.target.closest('.cue').dataset.i][e.target.dataset.k]); });
@@ -468,6 +470,76 @@ async function onTrDone(t) {
   S.p = await api('/api/p/' + S.p.id); renderCues(); updateStat();
   toast(t.result?.missing ? `Xong, còn ${t.result.missing} câu chưa dịch được` : 'Đã dịch xong toàn bộ');
 }
+
+/* ---- tìm và bổ sung câu bị sót ---- */
+const F = { t: 0, a: null, b: null };
+const showFrame5 = debounce(() => loadImg($('#frame5'), $('#skel5'), frameUrl(F.t, 960)), 150);
+function initFinder() {
+  const d = S.p.info.duration, sl = $('#fSlider');
+  sl.max = d.toFixed(1);
+  if (F.pid !== S.p.id) { F.pid = S.p.id; F.t = Math.min(d * 0.3, d); F.a = F.b = null; }
+  sl.value = F.t; updateFinder(); showFrame5();
+}
+function updateFinder() {
+  $('#fOut').textContent = fmt(F.t);
+  $('#tlHead').style.left = (F.t / S.p.info.duration * 100) + '%';
+  const r = $('#tlRange'), d = S.p.info.duration, ok = F.a != null && F.b != null && F.b > F.a;
+  r.style.display = F.a != null || F.b != null ? 'block' : 'none';
+  const a = F.a ?? F.b, b = F.b ?? F.a;
+  r.style.left = (Math.min(a, b ?? a) / d * 100) + '%'; r.style.width = Math.max(.4, Math.abs((b ?? a) - a) / d * 100) + '%';
+  $('#fRange').textContent = ok ? `Sẽ quét lại đoạn ${fmt(F.a)} đến ${fmt(F.b)}.`
+    : (F.a != null || F.b != null) ? 'Hãy đặt cả điểm đầu và điểm cuối (điểm cuối phải sau điểm đầu).'
+      : 'Chưa chọn đoạn: sẽ quét quanh điểm đang xem (từ −1,5s đến +2s).';
+}
+function drawTimeline() {
+  if (!S.p || !$('#tlSegs')) return;
+  const d = S.p.info.duration;
+  $('#tlSegs').innerHTML = S.p.cues.map(c => `<i style="left:${c.start / d * 100}%;width:${Math.max(.2, (c.end - c.start) / d * 100)}%"></i>`).join('');
+  const cs = S.p.cues.slice().sort((x, y) => x.start - y.start), gaps = [];
+  let prev = 0;
+  for (const c of cs) { if (c.start - prev >= 3) gaps.push([prev, c.start]); prev = Math.max(prev, c.end); }
+  if (d - prev >= 3) gaps.push([prev, d]);
+  const g = $('#fGaps');
+  g.innerHTML = gaps.length ? gaps.slice(0, 40).map((x, i) => `<button class="btn mini" type="button" data-gap="${i}">${fmt(x[0])} – ${fmt(x[1])}</button>`).join('') + (gaps.length > 40 ? `<span class="hint">và ${gaps.length - 40} khoảng nữa</span>` : '')
+    : '<span class="hint">Không có khoảng trống dài.</span>';
+  g._gaps = gaps;
+}
+$('#fGaps').addEventListener('click', e => {
+  const b = e.target.closest('[data-gap]'); if (!b) return;
+  const [a, z] = $('#fGaps')._gaps[+b.dataset.gap];
+  F.a = a; F.b = z; setF((a + z) / 2);
+});
+function setF(t) { F.t = Math.max(0, Math.min(S.p.info.duration, t)); $('#fSlider').value = F.t; updateFinder(); showFrame5(); }
+$('#fSlider').addEventListener('input', e => setF(+e.target.value));
+$$('[data-fseek]').forEach(b => b.onclick = () => setF(F.t + +b.dataset.fseek));
+$('#tlBar').addEventListener('click', e => { const r = e.currentTarget.getBoundingClientRect(); setF((e.clientX - r.left) / r.width * S.p.info.duration); });
+$('#fSetA').onclick = () => { F.a = F.t; if (F.b != null && F.b <= F.a) F.b = null; updateFinder(); };
+$('#fSetB').onclick = () => { F.b = F.t; if (F.a != null && F.a >= F.b) F.a = null; updateFinder(); };
+$('#fAdd').onclick = () => {
+  const cs = S.p.cues, t = +F.t.toFixed(2);
+  let i = cs.findIndex(c => c.start > t); if (i < 0) i = cs.length;
+  const next = cs[i], end = Math.min(t + 2, next ? Math.max(t + .3, next.start) : S.p.info.duration);
+  cs.splice(i, 0, { id: 0, start: t, end: +end.toFixed(2), src: '', ref: '', vi: '' });
+  renumber(); S.cur = i; renderCues(i); updateStat(); save();
+  const row = $('#cues').children[i]; row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => $('textarea.src', row)?.focus(), 350);
+  toast('Đã thêm câu trống, hãy gõ nội dung.');
+};
+$('#rsBtn').onclick = async () => {
+  const ok = F.a != null && F.b != null && F.b > F.a;
+  const t0 = ok ? F.a : Math.max(0, F.t - 1.5), t1 = ok ? F.b : F.t + 2;
+  try {
+    await save(true);
+    await api(`/api/p/${S.p.id}/rescan`, { json: { t0, t1, min_conf: +$('#rs_conf').value, seg_min: +$('#rs_seg').value, thr: +$('#rs_thr').value } });
+  } catch (e) { return toast(e.message, true); }
+  runTask($('#rsProg'), onRescanDone, $('#rsBtn'));
+};
+async function onRescanDone(t) {
+  S.p = await api('/api/p/' + S.p.id); renderCues(); updateStat();
+  const r = t.result || {};
+  toast(r.added ? `Đã thêm ${r.added} câu mới (tìm thấy ${r.found}, ${r.found - r.added} câu trùng bỏ qua)` : `Không tìm thấy câu mới${r.found ? ' (các câu tìm thấy đã có sẵn)' : ''}. Thử hạ "Độ tin cậy" hoặc thêm câu bằng tay.`, !r.added);
+}
+
 /* nhập SRT */
 $('#impBtn').onclick = () => { $('#impText').value = ''; $('#impFile').value = ''; $('#dlgImp').showModal(); };
 $('#impFile').onchange = async e => {

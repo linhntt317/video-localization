@@ -33,5 +33,7 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 - Hugging Face Spaces Docker cần gói PRO (xác nhận qua ảnh chụp màn hình của người dùng, 4/11/2026) → không dùng cho phương án miễn phí. Đã bỏ workflow sync-hf. Dockerfile vẫn chạy user uid 1000.
 - Tải video từ link: `/api/import_url` (link trực tiếp hoặc Google Drive qua gdown).
 
+- Bước 3 có khung "Tìm và bổ sung câu bị sót": thanh thời gian + đánh dấu câu, gợi ý khoảng trống ≥3s, thêm câu tại điểm đang xem, quét lại một đoạn (`POST /api/p/<pid>/rescan`, `merge_cues` chỉ thêm câu không trùng >40%, không xoá câu cũ; ngưỡng mặc định hạ xuống conf 40 / seg 55).
+
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.
