@@ -1,0 +1,9 @@
+services:
+  video-localization:
+    build: .
+    ports: ["8765:8765"]
+    environment:
+      ACCESS_TOKEN: ${ACCESS_TOKEN:?hãy đặt ACCESS_TOKEN}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+    volumes:
+      - ./projects:/app/projects

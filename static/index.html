@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video localization</title>
+<link rel="icon" href="/logo.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="bg" aria-hidden="true"><i></i><i></i><i></i></div>
+<canvas id="confetti" aria-hidden="true"></canvas>
+
+<header class="top">
+  <div class="brand">
+    <img src="/logo.png" alt="" class="logo">
+    <div><b>Video localization</b><small>Từ video sub cứng đến video sub Việt chuẩn YouTube</small></div>
+  </div>
+  <nav class="stepper" id="stepper">
+    <span class="pill" id="pill"></span>
+    <button data-step="1"><i>1</i><span>Video</span></button>
+    <button data-step="2"><i>2</i><span>Quét sub</span></button>
+    <button data-step="3"><i>3</i><span>Phụ đề</span></button>
+    <button data-step="4"><i>4</i><span>Xuất video</span></button>
+  </nav>
+  <div class="chips" id="chips"></div>
+  <button class="chip srv" id="srvBtn" type="button">Máy xử lý</button>
+</header>
+
+<main>
+  <!-- ============ BƯỚC 1 ============ -->
+  <section class="step" id="s1">
+    <div class="grid2">
+      <div class="card rise" style="--i:0">
+        <h2>Tạo dự án mới</h2>
+        <label class="drop" id="drop">
+          <input type="file" id="file" accept="video/*" hidden>
+          <svg viewBox="0 0 48 48" class="dropicon"><path d="M24 32V10m0 0-9 9m9-9 9 9M8 32v6a2 2 0 0 0 2 2h28a2 2 0 0 0 2-2v-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <b>Kéo thả video vào đây</b>
+          <span>hoặc bấm để chọn file (mp4, mov, mkv...)</span>
+        </label>
+        <div class="or"><span>hoặc dùng file có sẵn trên máy (không cần chép lại)</span></div>
+        <div class="row">
+          <input type="text" id="pathIn" placeholder="Dán đường dẫn, ví dụ D:\Phim\tap3.mp4">
+          <button class="btn" id="pathBtn">Tạo dự án</button>
+        </div>
+        <div class="upbar" id="upbar" hidden><div class="bar"><i id="upfill"></i></div><small id="uptxt"></small></div>
+      </div>
+      <div class="card rise" style="--i:1">
+        <h2>Dự án gần đây</h2>
+        <div id="projects" class="projects"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ BƯỚC 2 ============ -->
+  <section class="step" id="s2" hidden>
+    <div class="grid2 wide">
+      <div class="card rise" style="--i:0">
+        <div class="cardhead"><h2>Khung hình và vùng sub</h2>
+          <button class="btn ghost" id="detectBtn"><span class="spark">✦</span> Tự dò vùng sub</button></div>
+        <div class="viewer" id="viewer">
+          <div class="skeleton" id="skel"></div>
+          <img id="frame" alt="">
+          <div id="bandLayer"></div>
+        </div>
+        <div class="row tl">
+          <button class="btn mini" data-seek="-5">−5s</button>
+          <input type="range" id="tSlider" min="0" max="100" step="0.1">
+          <button class="btn mini" data-seek="5">+5s</button>
+          <output id="tOut">0:00</output>
+        </div>
+        <p class="hint">Kéo thanh thời gian tới lúc có sub rồi chỉnh các dải màu cho khớp từng dòng chữ.</p>
+      </div>
+      <div class="card rise" style="--i:1">
+        <div class="cardhead"><h2>Các dòng sub cần đọc</h2>
+          <button class="btn mini" id="addBand">+ Thêm dòng</button></div>
+        <div id="bands"></div>
+        <details class="adv"><summary>Tuỳ chọn nâng cao</summary>
+          <div class="advgrid">
+            <label>Số khung/giây<input type="number" id="o_fps" min="2" max="15" step="1"></label>
+            <label>Từ giây<input type="number" id="o_t0" min="0" step="0.5" placeholder="đầu"></label>
+            <label>Đến giây<input type="number" id="o_t1" min="0" step="0.5" placeholder="cuối"></label>
+            <label>Ngưỡng chữ trắng<input type="number" id="o_thr" min="120" max="254" step="1"></label>
+            <label>Độ tin cậy tối thiểu<input type="number" id="o_seg" min="0" max="100" step="1"></label>
+          </div>
+        </details>
+        <button class="btn primary big" id="ocrBtn"><span class="spinner"></span><span class="lbl">Quét OCR</span></button>
+        <div class="prog" id="ocrProg" hidden>
+          <div class="bar"><i></i></div><div class="progrow"><span class="pm"></span><b class="pp">0%</b></div>
+          <button class="btn mini danger" data-cancel>Huỷ</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ BƯỚC 3 ============ -->
+  <section class="step" id="s3" hidden>
+    <div class="toolbar rise" style="--i:0">
+      <div class="stat"><b id="statDone">0</b><span>/ <span id="statAll">0</span> câu đã dịch</span></div>
+      <div class="sp"></div>
+      <button class="btn primary" id="trBtn"><span class="spark">✦</span> Dịch bằng Claude</button>
+      <button class="btn" id="impBtn">Nhập SRT Việt</button>
+      <div class="menu"><button class="btn" id="expBtn">Xuất SRT ▾</button>
+        <div class="menubox"><a id="expVi" href="#">SRT tiếng Việt</a><a id="expSrc" href="#">SRT gốc</a></div></div>
+      <button class="btn" id="addCue">+ Thêm câu</button>
+    </div>
+    <div class="prog" id="trProg" hidden>
+      <div class="bar"><i></i></div><div class="progrow"><span class="pm"></span><b class="pp">0%</b></div>
+      <button class="btn mini danger" data-cancel>Huỷ</button>
+    </div>
+    <div class="grid3">
+      <div id="cues" class="cues"></div>
+      <aside class="side card rise" style="--i:1">
+        <h3>Khung hình của câu đang chọn</h3>
+        <div class="viewer small"><div class="skeleton" id="skel3"></div><img id="frame3" alt=""></div>
+        <p class="hint" id="cueHint">Bấm vào một câu để xem khung hình tương ứng.</p>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============ BƯỚC 4 ============ -->
+  <section class="step" id="s4" hidden>
+    <div class="grid2 wide">
+      <div>
+        <div class="card rise" style="--i:0">
+          <div class="cardhead"><h2>Xem thử đúng như bản xuất</h2>
+            <select id="pvCue"></select></div>
+          <div class="viewer" id="viewer4">
+            <div class="skeleton" id="skel4"></div>
+            <img id="frame4" alt="">
+            <div class="pvbusy" id="pvBusy"><span class="spinner on"></span> Đang dựng khung hình...</div>
+          </div>
+        </div>
+        <div class="card rise result" style="--i:2" id="resultCard" hidden>
+          <h2>Video đã xong <span class="tada">🎉</span></h2>
+          <video id="player" controls preload="metadata"></video>
+          <div class="row wrap">
+            <a class="btn primary" id="dlMp4" href="#">Tải video MP4</a>
+            <a class="btn" id="dlVi" href="#">SRT Việt</a>
+            <a class="btn" id="dlSrc" href="#">SRT gốc</a>
+          </div>
+          <h3>Kiểm tra chuẩn YouTube</h3>
+          <ul class="checks" id="checks"></ul>
+        </div>
+      </div>
+      <div>
+        <div class="card rise" style="--i:1" id="settingsCard"></div>
+        <div class="card rise" style="--i:2">
+          <button class="btn primary big" id="renderBtn"><span class="spinner"></span><span class="lbl">Xuất video chuẩn YouTube</span></button>
+          <div class="prog" id="rdProg" hidden>
+            <div class="bar"><i></i></div><div class="progrow"><span class="pm"></span><b class="pp">0%</b></div>
+            <button class="btn mini danger" data-cancel>Huỷ</button>
+          </div>
+          <p class="hint">Xuất H.264 High, yuv420p, AAC 48kHz, faststart: đúng khuyến nghị của YouTube.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ============ HỘP THOẠI ============ -->
+<dialog id="dlgTr">
+  <form method="dialog" class="dlg">
+    <h2>Dịch bằng Claude</h2>
+    <label>API key Claude<input type="password" id="trKey" placeholder="sk-ant-..." autocomplete="off"></label>
+    <label class="chk"><input type="checkbox" id="trRemember"> Nhớ key trên máy này (lưu trong trình duyệt)</label>
+    <label>Model<input type="text" id="trModel"></label>
+    <label>Quy tắc dịch<textarea id="trRules" rows="5"></textarea></label>
+    <label>Bảng tên và thuật ngữ (mỗi dòng: gốc = dịch)<textarea id="trGloss" rows="5" placeholder="Chloe = Chloe&#10;Gabriel = Gabriel&#10;Ji A = Ji A"></textarea></label>
+    <label class="chk"><input type="checkbox" id="trOnlyEmpty" checked> Chỉ dịch những câu chưa có bản dịch</label>
+    <div class="row end"><button value="cancel" class="btn ghost">Đóng</button><button value="go" class="btn primary" id="trGo">Bắt đầu dịch</button></div>
+  </form>
+</dialog>
+
+<dialog id="dlgImp">
+  <form method="dialog" class="dlg">
+    <h2>Nhập SRT tiếng Việt</h2>
+    <p class="hint">Dán nội dung SRT đã dịch ở nơi khác hoặc chọn file. Nếu số câu bằng nhau sẽ khớp theo thứ tự, nếu không sẽ khớp theo thời gian.</p>
+    <input type="file" id="impFile" accept=".srt,text/plain">
+    <textarea id="impText" rows="10" placeholder="1&#10;00:00:02,000 --> 00:00:03,200&#10;Tôi tên là Chloe."></textarea>
+    <div class="row end"><button value="cancel" class="btn ghost">Đóng</button><button value="go" class="btn primary" id="impGo">Nhập</button></div>
+  </form>
+</dialog>
+
+<dialog id="dlgConn">
+  <form method="dialog" class="dlg">
+    <h2>Kết nối máy xử lý</h2>
+    <p class="hint">Trang web này chỉ là giao diện. Việc quét OCR và xuất video (ffmpeg, Tesseract) chạy trên máy xử lý của bạn: app trên máy bạn, hoặc một server tự dựng bằng Docker.</p>
+    <p class="hint bad" id="connFail" hidden>Chưa kết nối được. Hãy bật app trên máy bạn (start.bat / start.sh) hoặc kiểm tra lại địa chỉ.</p>
+    <label>Địa chỉ máy xử lý<input type="text" id="connUrl" placeholder="http://127.0.0.1:8765"></label>
+    <label>Mã truy cập (nếu server có đặt)<input type="password" id="connToken" autocomplete="off"></label>
+    <p class="hint" id="connLocal">Tải bản chạy trên máy ở mục Tải về của trang chủ nếu bạn chưa có.</p>
+    <div class="row end"><button value="cancel" class="btn ghost">Đóng</button><button value="go" class="btn primary" id="connGo">Kết nối</button></div>
+  </form>
+</dialog>
+
+<div id="toasts" aria-live="polite"></div>
+<script src="/app.js"></script>
+</body>
+</html>
