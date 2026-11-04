@@ -10,9 +10,19 @@ const LOCAL = ['127.0.0.1', 'localhost', '[::1]', ''].includes(location.hostname
 const lsGet = k => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
 const lsSet = (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) { } };
 const DEFAULT_SERVER = 'http://127.0.0.1:8765';
+/* Mở bằng link dạng ?server=https://...&token=... (Colab in sẵn link này) thì tự lưu cấu hình rồi xoá khỏi thanh địa chỉ */
+const QP = (() => {
+  try {
+    const q = new URLSearchParams(location.search), o = { server: (q.get('server') || '').trim().replace(/\/+$/, ''), token: (q.get('token') || '').trim() };
+    if (o.server) lsSet('vl_server', o.server);
+    if (o.token) lsSet('vl_token', o.token);
+    if (o.server || o.token) history.replaceState(null, '', location.pathname);
+    return o;
+  } catch (e) { return { server: '', token: '' }; }
+})();
 const CFG = {
-  base: LOCAL ? '' : (lsGet('vl_server') || DEFAULT_SERVER),
-  token: lsGet('vl_token'),
+  base: LOCAL ? '' : (QP.server || lsGet('vl_server') || DEFAULT_SERVER),
+  token: QP.token || lsGet('vl_token'),
 };
 const U = path => CFG.base + path + (CFG.token && path.startsWith('/api/') ? (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(CFG.token) : '');
 const isLoopHost = h => ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(h);

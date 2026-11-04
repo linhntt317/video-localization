@@ -132,3 +132,11 @@ Lưu ý: tải video lên qua tunnel miễn phí bị giới hạn khoảng 100 
 ### Cập nhật bản trên Vercel
 
 Sau khi sửa `static/`, chạy `./build_site.sh` để tạo thư mục `site/` (đã minify bằng esbuild, kèm logo), rồi `./build_site.sh --deploy` (cần `vercel login`, chọn project `video-localization`).
+
+### Chỉ có điện thoại: dùng Google Colab làm máy xử lý
+
+Không cần máy tính hay VPS. Mở `colab.ipynb` (trong repo này) bằng Google Colab, chạy lần lượt 3 ô; ô cuối in ra một link dạng `https://video-localization.vercel.app/?server=...&token=...`. Mở link đó trên điện thoại: trang tự lưu địa chỉ và mã truy cập rồi kết nối luôn.
+
+- Giữ tab Colab chạy trong lúc làm việc. Colab miễn phí tự ngắt sau vài giờ; khi đó chạy lại ô cuối để lấy link mới.
+- Dự án và video lưu trong Google Drive (thư mục `video-localization`) nên không mất khi Colab ngắt. Video lớn: để lên Drive rồi dán đường dẫn `/content/drive/MyDrive/video-localization/ten.mp4` ở bước 1 (tunnel miễn phí giới hạn ~100 MB mỗi lần tải lên).
+- Link chứa mã truy cập: đừng chia sẻ cho người khác.

@@ -22,5 +22,10 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 - Luồng đầy đủ khi giao diện ở origin khác máy xử lý (giống Vercel → 127.0.0.1) + ACCESS_TOKEN: tải video, dò vùng sub, OCR (eng), nhập SRT, xem thử, xuất MP4 đạt mọi mục kiểm tra YouTube.
 - Hộp "Máy xử lý": nút Thử kết nối, báo lỗi cụ thể (sai token, CORS/ALLOWED_ORIGINS, http từ trang https, Safari/iOS).
 
+## Máy xử lý trên điện thoại (Colab)
+- `colab.ipynb`: cài ffmpeg/Tesseract, clone repo, dự án lưu Drive, chạy app + cloudflared, in link `SITE/?server=<tunnel>&token=<mã>`. `app.js` đọc `?server=&token=` rồi lưu localStorage và xoá khỏi URL.
+- `static/logo.png` là bản sao `assets/logo.png` để Vercel (root dir `static`) có logo.
+- Deploy Vercel: lần thử `create_deployment` gitSource báo `git_info_fail` vì Vercel (hanvubang16-3091) chưa kết nối repo linhntt317/video-localization → cần kết nối repo trong Vercel (Root Directory = `static`) hoặc dán file inline.
+
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.
