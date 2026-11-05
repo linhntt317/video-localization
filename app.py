@@ -19,6 +19,10 @@ ROOT = util.ROOT
 PROJ_DIR = os.path.join(ROOT, "projects")
 os.makedirs(PROJ_DIR, exist_ok=True)
 
+import mimetypes  # noqa: E402
+mimetypes.add_type("application/wasm", ".wasm")
+mimetypes.add_type("text/javascript", ".js")
+
 app = Flask(__name__, static_folder="static", static_url_path="")
 LOCK = threading.Lock()
 
@@ -49,6 +53,8 @@ def _guard():
 
 @app.after_request
 def _cors(resp):
+    if request.path.startswith("/vendor/"):
+        resp.headers["Cache-Control"] = "public, max-age=2592000"  # bộ ffmpeg.wasm ~32MB, trình duyệt giữ lại để lần sau khỏi tải
     o = (request.headers.get("Origin") or "").rstrip("/")
     if o and ("*" in ALLOWED or o in ALLOWED):
         resp.headers["Access-Control-Allow-Origin"] = o

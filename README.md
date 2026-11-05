@@ -171,3 +171,12 @@ Bấm nút **Công cụ** ở góc trên (không dính vào quy trình 4 bước
 - **Ghép video:** chọn nhiều video, sắp thứ tự bằng ↑ ↓. Các video cùng định dạng (codec, độ phân giải, fps, âm thanh) được ghép **không mã hoá lại** (rất nhanh, giữ nguyên chất lượng). Khác định dạng thì tự mã hoá lại về cùng khung hình, video không có tiếng được chèn đoạn im lặng; có thể chọn 1080p/720p/480p.
 - **Cắt video:** kéo thanh xem trước để chọn điểm đầu/cuối cho từng đoạn, thêm nhiều đoạn, chọn mỗi đoạn một file hoặc nối thành một. **Cắt nhanh** (mặc định) không mã hoá lại nhưng điểm đầu có thể lệch về keyframe trước đó vài giây; tick **cắt chính xác** nếu cần đúng từng khung (chậm hơn).
 - **Tách MP3:** chọn chất lượng 96-320 kbps và (tuỳ chọn) khoảng thời gian. Video không có âm thanh sẽ báo lỗi.
+
+### Xử lý ngay trên máy bạn (không tải video lên)
+
+Tab **Trên máy bạn** trong mục Công cụ chạy ffmpeg ngay trong trình duyệt (ffmpeg.wasm, các file nằm ở `static/vendor/ffmpeg/`): video không rời khỏi thiết bị và không cần máy xử lý. Có **Kiểm tra máy** (thử nạp ffmpeg, thử mã hoá MP3, và thử đọc một video thật của bạn), **Cắt nhanh** (không mã hoá lại, nhiều đoạn, tuỳ chọn nối) và **Tách MP3**.
+
+- Trình duyệt đọc video theo từng phần (không nạp cả file vào RAM), nên cắt/tách từ video lớn được; kết quả nằm trong bộ nhớ nên chỉ hợp khi kết quả nhỏ (vài trăm MB trở xuống).
+- Kết quả chỉ nằm trong trang: bấm **Tải về** (hoặc **Lưu/Chia sẻ** nếu thiết bị hỗ trợ) ngay, tải lại trang là mất.
+- Lần đầu trình duyệt tải bộ ffmpeg khoảng 32 MB rồi giữ lại. iPhone/iPad giới hạn bộ nhớ mỗi tab chặt, tab có thể bị tắt khi xử lý file lớn: hãy chạy "Kiểm tra máy" trước, việc nặng dùng máy xử lý.
+- ffmpeg.wasm (@ffmpeg/ffmpeg 0.12.10, @ffmpeg/core 0.12.6) là mã nguồn mở của dự án ffmpegwasm; xem giấy phép của ffmpeg/x264 nếu bạn phân phối lại.

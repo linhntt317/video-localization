@@ -892,7 +892,7 @@ $('#toolsBtn').onclick = () => showTools(!TL.on);
 $('#toolTabs').addEventListener('click', e => {
   const b = e.target.closest('[data-tool]'); if (!b) return;
   $$('#toolTabs button').forEach(x => x.classList.toggle('on', x === b));
-  ['merge', 'cut', 'mp3'].forEach(k => $('#tool_' + k).hidden = k !== b.dataset.tool);
+  ['merge', 'cut', 'mp3', 'local'].forEach(k => $('#tool_' + k).hidden = k !== b.dataset.tool);
 });
 async function loadToolOut() {
   const list = await api('/api/tools/outputs').catch(() => []);
@@ -1051,6 +1051,172 @@ $('#mpRun').onclick = () => {
   if (!TL.mp) return toast('Hãy chọn video trước.', true);
   const a = $('#mpA').value.trim(), b = $('#mpB').value.trim();
   startTool('audio', { sid: TL.mp.sid, bitrate: +$('#mpBr').value, start: a ? parseT(a) : null, end: b ? parseT(b) : null, name: $('#mpName').value.trim() }, $('#mpRun'));
+};
+
+
+
+/* ---------------------------------------------------------------- xử lý ngay trên máy bạn (ffmpeg.wasm, không tải video lên) */
+const LC = { ff: null, loading: null, log: [], cutFile: null, mpFile: null, segs: [], out: [] };
+$('#lcTabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-lc]'); if (!b) return;
+  $$('#lcTabs button').forEach(x => x.classList.toggle('on', x === b));
+  ['test', 'cut', 'mp3'].forEach(k => $('#lc_' + k).hidden = k !== b.dataset.lc);
+});
+async function lcEngine() {
+  if (LC.ff) return LC.ff;
+  if (!LC.loading) LC.loading = (async () => {
+    const { FFmpeg } = await import('/vendor/ffmpeg/index.js');
+    const ff = new FFmpeg();
+    ff.on('log', ({ message }) => { LC.log.push(message); if (LC.log.length > 200) LC.log.shift(); });
+    await ff.load({ coreURL: '/vendor/ffmpeg/ffmpeg-core.js', wasmURL: '/vendor/ffmpeg/ffmpeg-core.wasm' });
+    LC.ff = ff; return ff;
+  })();
+  try { return await LC.loading; } finally { LC.loading = null; }
+}
+function lcProg(f, msg) { const r = $('#lcProg'); r.hidden = false; $('.bar i', r).style.width = (Math.max(0, Math.min(1, f)) * 100).toFixed(1) + '%'; $('.pm', r).textContent = msg || ''; $('.pp', r).textContent = Math.round(Math.max(0, Math.min(1, f)) * 100) + '%'; }
+const lcExt = n => (n.match(/\.[A-Za-z0-9]{1,5}$/) || ['.mp4'])[0].toLowerCase();
+const lcBase = n => n.replace(/\.[^.]+$/, '');
+/* chạy ffmpeg trên một File (gắn bằng WORKERFS nên KHÔNG nạp cả file vào bộ nhớ). run(ff, inPath) trả về [{name, blob}] */
+async function lcWith(file, btn, label, run) {
+  btn?.classList.add('busy'); btn && (btn.disabled = true);
+  let cancelled = false;
+  $('#lcProg [data-cancel]').onclick = async () => { cancelled = true; try { LC.ff?.terminate(); } catch (e) { } LC.ff = null; toast('Đã huỷ'); $('#lcProg').hidden = true; };
+  let ff = null, mounted = false;
+  try {
+    lcProg(0, 'Đang nạp ffmpeg (lần đầu phải tải ~32 MB)...');
+    ff = await lcEngine();
+    const prog = ({ progress }) => lcProg(0.05 + 0.9 * (isFinite(progress) ? progress : 0), label);
+    ff.on('progress', prog);
+    const safe = new File([file], 'input' + lcExt(file.name), { type: file.type });  // tên an toàn, không sao chép dữ liệu
+    await ff.createDir('/in'); await ff.mount('WORKERFS', { files: [safe] }, '/in'); mounted = true;
+    lcProg(0.05, label);
+    const outs = await run(ff, '/in/' + safe.name);
+    ff.off('progress', prog);
+    lcProg(1, 'Xong'); setTimeout(() => { $('#lcProg').hidden = true; }, 700);
+    return outs;
+  } catch (e) {
+    if (!cancelled) { const tail = LC.log.slice(-3).join(' | '); toast('Không xử lý được trên trình duyệt này: ' + (e.message || e) + (tail ? ' — ' + tail : '') + '. Hãy thử tab "Cắt video"/"Tách MP3" dùng máy xử lý.', true); }
+    $('#lcProg').hidden = true; return null;
+  } finally {
+    try { if (mounted && LC.ff) { await LC.ff.unmount('/in'); await LC.ff.deleteDir('/in'); } } catch (e) { }
+    btn?.classList.remove('busy'); btn && (btn.disabled = false);
+  }
+}
+async function lcExec(ff, args) { const r = await ff.exec(args); if (r !== 0) throw new Error('ffmpeg trả về mã lỗi ' + r); }
+async function lcRead(ff, path, name, mime) { const d = await ff.readFile(path); const blob = new Blob([d.buffer ? d : new Uint8Array(d)], { type: mime }); try { await ff.deleteFile(path); } catch (e) { } return { name, blob }; }
+function lcAddOut(o) { LC.out.unshift({ ...o, url: URL.createObjectURL(o.blob) }); renderLcOut(); }
+function renderLcOut() {
+  $('#lcOut').innerHTML = LC.out.length ? LC.out.map((o, i) => `<div class="titem" data-i="${i}"><span class="n">${i + 1}</span><div class="nm"><b>${esc(o.name)}</b><small>${mb(o.blob.size)}</small></div>
+    <div class="bt"><a class="btn mini primary" href="${o.url}" download="${esc(o.name)}">Tải về</a>${navigator.canShare && navigator.canShare({ files: [new File([o.blob], o.name, { type: o.blob.type })] }) ? '<button class="btn mini" type="button" data-share>Lưu/Chia sẻ</button>' : ''}<button class="btn mini danger" type="button" data-del>×</button></div></div>`).join('') : '<div class="empty">Chưa có kết quả.</div>';
+}
+$('#lcOut').addEventListener('click', async e => {
+  const it = e.target.closest('.titem'); if (!it) return; const o = LC.out[+it.dataset.i];
+  if (e.target.closest('[data-del]')) { URL.revokeObjectURL(o.url); LC.out.splice(+it.dataset.i, 1); renderLcOut(); }
+  else if (e.target.closest('[data-share]')) { try { await navigator.share({ files: [new File([o.blob], o.name, { type: o.blob.type })] }); } catch (err) { if (err.name !== 'AbortError') toast('Không chia sẻ được: ' + err.message, true); } }
+});
+renderLcOut();
+
+/* ---- kiểm tra thiết bị ---- */
+$('#lcTestBtn').onclick = async () => {
+  const out = $('#lcTestOut'), btn = $('#lcTestBtn'), rows = [];
+  const add = (ok, t) => { rows.push(`<div class="titem" style="grid-template-columns:1fr"><span class="${ok ? 'okline' : 'badline'}">${ok ? '✓' : '✗'} ${esc(t)}</span></div>`); out.innerHTML = rows.join(''); };
+  out.innerHTML = ''; btn.classList.add('busy'); btn.disabled = true;
+  try {
+    add(typeof WebAssembly === 'object', 'Trình duyệt hỗ trợ WebAssembly');
+    add(typeof Worker !== 'undefined', 'Hỗ trợ Web Worker');
+    add(typeof File !== 'undefined' && typeof Blob !== 'undefined', 'Hỗ trợ đọc file cục bộ');
+    add(true, `Thiết bị: ${navigator.userAgent.match(/\(([^)]+)\)/)?.[1] || 'không rõ'}${navigator.deviceMemory ? ', RAM khoảng ' + navigator.deviceMemory + ' GB' : ''}`);
+    const t0 = performance.now(); let ff;
+    try { ff = await lcEngine(); add(true, `Nạp ffmpeg thành công (${((performance.now() - t0) / 1000).toFixed(1)} giây)`); }
+    catch (e) { add(false, 'Không nạp được ffmpeg: ' + (e.message || e) + '. Thiết bị/trình duyệt này không chạy được chế độ trên máy bạn.'); throw e; }
+    // thử mã hoá MP3 từ một đoạn âm thanh tự tạo (1 giây)
+    const sr = 8000, n = sr, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf), w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+    w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.sin(i / 8) * 8000, true);
+    await ff.writeFile('t.wav', new Uint8Array(buf));
+    const t1 = performance.now(); await lcExec(ff, ['-i', 't.wav', '-c:a', 'libmp3lame', '-b:a', '128k', 't.mp3']);
+    const mp3 = await ff.readFile('t.mp3'); await ff.deleteFile('t.wav'); await ff.deleteFile('t.mp3');
+    add(mp3.length > 500, `Mã hoá MP3 chạy được (${mp3.length} byte, ${((performance.now() - t1) / 1000).toFixed(1)} giây)`);
+    const f = $('#lcTestFile').files[0];
+    if (f) {
+      LC.log.length = 0; const safe = new File([f], 'input' + lcExt(f.name), { type: f.type }), t2 = performance.now();
+      await ff.createDir('/in'); await ff.mount('WORKERFS', { files: [safe] }, '/in');
+      try {
+        await ff.exec(['-i', '/in/' + safe.name, '-t', '1', '-f', 'null', '-']);
+        const dm = LC.log.join('\n').match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
+        add(!!dm, dm ? `Đọc được video "${f.name}" (${mb(f.size)}), thời lượng ${dm[1]}:${dm[2]}:${(+dm[3]).toFixed(0)}, mở file mất ${((performance.now() - t2) / 1000).toFixed(1)} giây, không nạp cả file vào bộ nhớ` : `Không đọc được thông tin video "${f.name}" (định dạng chưa hỗ trợ?)`);
+      } finally { try { await ff.unmount('/in'); await ff.deleteDir('/in'); } catch (e) { } }
+    }
+    add(true, 'Kết luận: thiết bị này dùng được "Cắt nhanh" và "Tách MP3" ngay trên máy. Nếu việc thật bị tắt tab hay báo lỗi bộ nhớ, hãy dùng máy xử lý.');
+  } catch (e) { if (!rows.length) add(false, String(e.message || e)); }
+  btn.classList.remove('busy'); btn.disabled = false;
+};
+
+/* ---- cắt nhanh trên máy ---- */
+function lcRenderSegs() {
+  $('#lcSegs').innerHTML = LC.segs.map((g, i) => `<div class="titem tseg" data-i="${i}"><span class="n">${i + 1}</span>
+    <label>Từ<input type="text" data-k="a" value="${fmt(g.a)}"></label><label>Đến<input type="text" data-k="b" value="${fmt(g.b)}"></label>
+    <div class="bt"><button class="btn mini" type="button" data-sa>Đầu = vị trí hiện tại</button><button class="btn mini" type="button" data-sb>Cuối = vị trí hiện tại</button><button class="btn mini danger" type="button" data-rm>×</button></div></div>`).join('');
+}
+$('#lcCutFile').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  LC.cutFile = f; const v = $('#lcVideo'); if (v.dataset.url) URL.revokeObjectURL(v.dataset.url);
+  v.dataset.url = URL.createObjectURL(f); v.src = v.dataset.url;
+  $('#lcCutBody').hidden = false; $('#lcCutName').placeholder = lcBase(f.name) + '_cat';
+  $('#lcCutInfo').textContent = `${f.name} · ${mb(f.size)}`;
+  v.onloadedmetadata = () => { const d = v.duration || 0; LC.segs = [{ a: 0, b: +Math.min(d || 10, 10).toFixed(2) }]; $('#lcCutInfo').textContent = `${f.name} · ${mb(f.size)} · ${dur(d)}`; lcRenderSegs(); };
+  v.onerror = () => { $('#lcCutInfo').textContent = `${f.name} · ${mb(f.size)} · (trình duyệt không xem trước được định dạng này, bạn vẫn có thể gõ thời gian tay)`; LC.segs = [{ a: 0, b: 10 }]; lcRenderSegs(); };
+};
+$('#lcAdd').onclick = () => { const t = +($('#lcVideo').currentTime || 0).toFixed(2); LC.segs.push({ a: t, b: +(t + 5).toFixed(2) }); lcRenderSegs(); };
+$('#lcSegs').addEventListener('click', e => {
+  const it = e.target.closest('.titem'); if (!it) return; const g = LC.segs[+it.dataset.i], t = +($('#lcVideo').currentTime || 0).toFixed(2);
+  if (e.target.closest('[data-rm]')) LC.segs.splice(+it.dataset.i, 1); else if (e.target.closest('[data-sa]')) g.a = t; else if (e.target.closest('[data-sb]')) g.b = t; else return;
+  lcRenderSegs();
+});
+$('#lcSegs').addEventListener('change', e => { const it = e.target.closest('.titem'), k = e.target.dataset.k; if (!it || !k) return; const g = LC.segs[+it.dataset.i]; g[k] = parseT(e.target.value); e.target.value = fmt(g[k]); });
+$('#lcCutRun').onclick = async () => {
+  const f = LC.cutFile; if (!f) return toast('Hãy chọn video trước.', true);
+  const bad = LC.segs.findIndex(g => !(g.b > g.a)); if (!LC.segs.length || bad >= 0) return toast(bad >= 0 ? `Đoạn ${bad + 1}: điểm cuối phải sau điểm đầu.` : 'Chưa có đoạn nào để cắt.', true);
+  const d = $('#lcVideo').duration || 0, keep = LC.segs.reduce((a, g) => a + (g.b - g.a), 0);
+  if (d > 0 && f.size * (keep / d) > 700 * 1048576 && !confirm(`Các đoạn cắt ước tính khoảng ${mb(f.size * keep / d)}. Trình duyệt có thể hết bộ nhớ và tắt tab. Vẫn tiếp tục?`)) return;
+  const ext = ['.mp4', '.mov', '.m4v'].includes(lcExt(f.name)) ? '.mp4' : '.mkv', mime = ext === '.mp4' ? 'video/mp4' : 'video/x-matroska', base = $('#lcCutName').value.trim().replace(/\.[^.]+$/, '') || lcBase(f.name) + '_cat';
+  const join = $('#lcJoin').checked && LC.segs.length > 1, total = keep;
+  let done = 0;
+  const outs = await lcWith(f, $('#lcCutRun'), 'Đang cắt (không mã hoá lại)', async (ff, inPath) => {
+    const files = [];
+    for (let i = 0; i < LC.segs.length; i++) {
+      const g = LC.segs[i], out = join ? `s${i}${ext}` : `o${i}${ext}`;
+      await lcExec(ff, ['-ss', g.a.toFixed(3), '-i', inPath, '-t', (g.b - g.a).toFixed(3), '-c', 'copy', '-avoid_negative_ts', 'make_zero', out]);
+      done += g.b - g.a; lcProg(0.05 + 0.9 * done / total, `Đã cắt đoạn ${i + 1}/${LC.segs.length}`);
+      files.push(out);
+    }
+    if (join) {
+      await ff.writeFile('list.txt', files.map(x => `file '${x}'`).join('\n') + '\n');
+      await lcExec(ff, ['-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', 'joined' + ext]);
+      for (const x of files) await ff.deleteFile(x); await ff.deleteFile('list.txt');
+      return [await lcRead(ff, 'joined' + ext, base + ext, mime)];
+    }
+    const res = []; for (let i = 0; i < files.length; i++) res.push(await lcRead(ff, files[i], base + (files.length > 1 ? '_' + (i + 1) : '') + ext, mime));
+    return res;
+  });
+  if (outs) { outs.forEach(lcAddOut); toast(`Xong! Đã cắt ${outs.length} file. Bấm "Tải về" ngay (kết quả chỉ nằm trong trang này).`); }
+};
+
+/* ---- tách MP3 trên máy ---- */
+$('#lcMp3File').onchange = e => {
+  const f = e.target.files[0]; if (!f) return; LC.mpFile = f; $('#lcMp3Body').hidden = false;
+  $('#lcMp3Info').textContent = `${f.name} · ${mb(f.size)}`; $('#lcMpName').placeholder = lcBase(f.name);
+};
+$('#lcMpRun').onclick = async () => {
+  const f = LC.mpFile; if (!f) return toast('Hãy chọn video trước.', true);
+  const a = $('#lcMpA').value.trim() ? parseT($('#lcMpA').value) : 0, b = $('#lcMpB').value.trim() ? parseT($('#lcMpB').value) : 0;
+  if (b && b <= a) return toast('Điểm cuối phải sau điểm đầu.', true);
+  const base = $('#lcMpName').value.trim().replace(/\.[^.]+$/, '') || lcBase(f.name);
+  const outs = await lcWith(f, $('#lcMpRun'), 'Đang tách MP3', async (ff, inPath) => {
+    await lcExec(ff, [...(a > 0 ? ['-ss', a.toFixed(3)] : []), '-i', inPath, ...(b ? ['-t', (b - a).toFixed(3)] : []), '-vn', '-c:a', 'libmp3lame', '-b:a', $('#lcMpBr').value + 'k', '-id3v2_version', '3', 'a.mp3']);
+    return [await lcRead(ff, 'a.mp3', base + '.mp3', 'audio/mpeg')];
+  });
+  if (outs) { outs.forEach(lcAddOut); toast('Xong! Đã tách MP3. Bấm "Tải về" ngay (kết quả chỉ nằm trong trang này).'); }
 };
 
 

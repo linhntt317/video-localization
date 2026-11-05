@@ -253,6 +253,7 @@
       <button type="button" data-tool="merge" class="on">Ghép video</button>
       <button type="button" data-tool="cut">Cắt video</button>
       <button type="button" data-tool="mp3">Tách MP3</button>
+      <button type="button" data-tool="local">Trên máy bạn</button>
     </div>
     <div class="grid2 wide">
       <div>
@@ -306,6 +307,55 @@
             <label>Tên file kết quả (không bắt buộc)<input type="text" id="mpName" placeholder="tên video"></label>
             <button class="btn primary big" id="mpRun" type="button"><span class="spinner"></span><span class="lbl">Tách MP3</span></button>
           </div>
+        </div>
+
+        <div class="card rise" id="tool_local" hidden>
+          <h2>Xử lý ngay trên máy bạn (không tải video lên)</h2>
+          <p class="hint">Video không rời khỏi thiết bị: trình duyệt tự cắt/tách bằng ffmpeg chạy tại chỗ (không cần máy xử lý). Hợp với <b>cắt nhanh</b> và <b>tách MP3</b> từ video lớn, vì kết quả nhỏ. Chậm hơn máy xử lý và bị giới hạn bộ nhớ của trình duyệt (đặc biệt trên iPhone/iPad), nên việc nặng (ghép video, cắt chính xác) hãy dùng các tab kia.</p>
+          <div class="seg" id="lcTabs">
+            <button type="button" data-lc="test" class="on">Kiểm tra máy</button>
+            <button type="button" data-lc="cut">Cắt nhanh</button>
+            <button type="button" data-lc="mp3">Tách MP3</button>
+          </div>
+          <div id="lc_test">
+            <p class="hint">Chạy thử một lần để biết thiết bị này dùng được không (lần đầu phải tải bộ ffmpeg khoảng 32 MB, sau đó trình duyệt giữ lại).</p>
+            <label>Thử với video thật của bạn (không bắt buộc, không tải lên đâu cả)<input type="file" id="lcTestFile" accept="video/*,audio/*"></label>
+            <button class="btn primary big" id="lcTestBtn" type="button"><span class="spinner"></span><span class="lbl">Kiểm tra thiết bị</span></button>
+            <div id="lcTestOut" class="tlist"></div>
+          </div>
+          <div id="lc_cut" hidden>
+            <label>Chọn video trên thiết bị<input type="file" id="lcCutFile" accept="video/*"></label>
+            <div id="lcCutBody" hidden>
+              <video id="lcVideo" controls playsinline preload="metadata" class="lcvideo"></video>
+              <p class="hint" id="lcCutInfo"></p>
+              <h3>Các đoạn cần giữ (tua video tới vị trí rồi bấm "Đầu/Cuối = vị trí hiện tại")</h3>
+              <div id="lcSegs" class="tlist"></div>
+              <button class="btn" id="lcAdd" type="button">+ Thêm đoạn</button>
+              <label class="chk"><input type="checkbox" id="lcJoin"> Nối các đoạn thành một file (bỏ tick = mỗi đoạn một file)</label>
+              <p class="hint">Cắt nhanh không mã hoá lại nên điểm đầu có thể lệch vài giây về keyframe trước đó. Cần đúng từng khung hình thì dùng tab "Cắt video" (máy xử lý).</p>
+              <label>Tên file kết quả (không bắt buộc)<input type="text" id="lcCutName" placeholder="tên video_cat"></label>
+              <button class="btn primary big" id="lcCutRun" type="button"><span class="spinner"></span><span class="lbl">Cắt ngay trên máy</span></button>
+            </div>
+          </div>
+          <div id="lc_mp3" hidden>
+            <label>Chọn video trên thiết bị<input type="file" id="lcMp3File" accept="video/*,audio/*"></label>
+            <div id="lcMp3Body" hidden>
+              <p class="hint" id="lcMp3Info"></p>
+              <div class="advgrid">
+                <label>Từ giây (để trống = từ đầu)<input type="text" id="lcMpA" placeholder="0:00"></label>
+                <label>Đến giây (để trống = hết)<input type="text" id="lcMpB" placeholder="hết"></label>
+                <label>Chất lượng<select id="lcMpBr"><option value="96">96 kbps</option><option value="128">128 kbps</option><option value="192" selected>192 kbps</option><option value="256">256 kbps</option><option value="320">320 kbps</option></select></label>
+              </div>
+              <label>Tên file kết quả (không bắt buộc)<input type="text" id="lcMpName" placeholder="tên video"></label>
+              <button class="btn primary big" id="lcMpRun" type="button"><span class="spinner"></span><span class="lbl">Tách MP3 ngay trên máy</span></button>
+            </div>
+          </div>
+          <div class="prog" id="lcProg" hidden>
+            <div class="bar"><i></i></div><div class="progrow"><span class="pm"></span><b class="pp">0%</b></div>
+            <button class="btn mini danger" data-cancel>Huỷ</button>
+          </div>
+          <h3 style="margin-top:14px">Kết quả (chỉ nằm trong trang này: hãy tải về ngay, tải lại trang là mất)</h3>
+          <div id="lcOut" class="tlist"></div>
         </div>
       </div>
       <div>

@@ -56,5 +56,7 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 
 - Chữ mỏng (đo 5/11, video thử 43 câu, chữ trắng KHÔNG đậm): lỗi cũ là `medianBlur(3)` trong `_text_mask` xoá nét 1px và chỉ đọc ảnh nhị phân. Sửa: bỏ median, thêm ứng viên `_prep_gray` (ảnh xám phóng to ~120px, kéo giãn tương phản) thử cuối chuỗi `run_jobs` (4 vòng). Đúng/43: viền mỏng 14→34, không viền 22→34, mỏng trên nền sáng 25→42, chữ nhỏ 40→43; chữ đậm vẫn 43. Mức cực khó (trắng mỏng trên nền xám sáng, viền 0,6px) vẫn ~80%.
 
+- Xử lý trên trình duyệt (tab "Trên máy bạn", `static/vendor/ffmpeg/` = @ffmpeg/ffmpeg 0.12.10 esm + @ffmpeg/core 0.12.6 đơn luồng, wasm 32MB, phục vụ cùng origin, `Cache-Control` 30 ngày, `.wasm` mimetype trong app.py). `lcWith` gắn `File` bằng WORKERFS (không nạp cả file), `lcExec`/`lcRead`; chỉ cắt `-c copy` (+nối concat) và `libmp3lame`. Đã kiểm thử trên Chromium headless (file 250MB cắt 10s trong ~1s), **chưa thử trên Safari/iPad thật**; không dùng được khi giao diện chạy từ Vercel (không có /vendor).
+
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.
