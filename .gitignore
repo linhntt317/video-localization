@@ -5,3 +5,6 @@ projects/*
 tessdata/
 site/
 tools/
+local.env
+access_token.txt
+link.txt

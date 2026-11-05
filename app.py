@@ -16,6 +16,25 @@ from studio import asr, ocr, render, srt, tools, translate, tts, util
 from studio.util import Cancelled
 
 ROOT = util.ROOT
+
+
+def load_local_env():
+    """Đọc file local.env (mỗi dòng KEY=VALUE, # là ghi chú) để đặt cấu hình mà không phải gõ biến môi trường mỗi lần.
+    Biến môi trường có sẵn luôn được ưu tiên."""
+    f = os.path.join(ROOT, "local.env")
+    if not os.path.isfile(f):
+        return
+    for ln in open(f, encoding="utf-8-sig").read().splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith("#") or "=" not in ln:
+            continue
+        k, v = ln.split("=", 1)
+        k, v = k.strip(), v.strip().strip('"').strip("'")
+        if k and k not in os.environ:
+            os.environ[k] = v
+
+
+load_local_env()
 PROJ_DIR = os.path.join(ROOT, "projects")
 os.makedirs(PROJ_DIR, exist_ok=True)
 

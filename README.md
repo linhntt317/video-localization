@@ -190,3 +190,22 @@ Tab **Trên máy bạn** trong mục Công cụ chạy ffmpeg ngay trong trình 
 4. Bước 4, nhóm **Lồng tiếng**: bật "Thêm giọng lồng tiếng", chọn xử lý tiếng gốc (tự nhỏ đi khi có giọng / nhỏ cố định / tắt hẳn / giữ nguyên), âm lượng, tăng tốc tối đa; rồi xuất video.
 
 Giọng đọc mặc định là **Edge TTS** (`pip install edge-tts`, Colab tự cài): miễn phí, giọng tiếng Việt Hoài My / Nam Minh, nhưng cần mạng và là dịch vụ **không chính thức** của Microsoft nên có thể bị chặn hoặc đổi. Muốn dùng nguồn giọng khác (Azure, ElevenLabs, OpenAI, FPT.AI...) chỉ cần viết một lớp có `synth(text, voice, out_path)` trong `studio/tts.py`.
+
+## 12. Máy nhà + Tailscale (miễn phí, không bị ngắt như Colab)
+
+Chạy app trên laptop/PC ở nhà, iPad hoặc điện thoại kết nối qua **Tailscale** (mạng riêng ảo, bản cá nhân miễn phí; bạn tự xem điều kiện hiện tại tại tailscale.com). Địa chỉ **cố định**, không đổi mỗi lần như tunnel Colab, không có giới hạn tải lên 100 MB của Cloudflare, và chỉ thiết bị trong mạng Tailscale của bạn mới vào được.
+
+**Làm một lần trên laptop Windows:**
+1. Cài **Tailscale** (tailscale.com/download), đăng nhập, bật Connected.
+2. Chạy `setup.bat` để cài Python, ffmpeg, **Tesseract** (cần cho OCR; có thể hiện hộp xin quyền quản trị, hãy bấm Yes) và dữ liệu ngôn ngữ. Nếu Tesseract vẫn chưa cài được, xem README mục "Xử lý lỗi thường gặp".
+3. (Tuỳ chọn) Sao chép `local.env.example` thành `local.env`, sửa `MEDIA_DIR` thành thư mục chứa video của bạn (ví dụ `D:/Videos`) để chọn video có sẵn trong app mà không cần tải lên. Cài thêm Whisper nếu muốn: `.venv\Scripts\pip install -r requirements-asr.txt`.
+4. Chạy **`start_tailscale.bat`**. Nó tự lấy địa chỉ Tailscale của máy, tự tạo mã truy cập (lưu ở `access_token.txt`), tự chạy lại nếu app dừng đột ngột, rồi in ra một link dạng `http://100.x.y.z:8765/?token=...` (cũng lưu ở `link.txt`).
+5. (Tuỳ chọn) Chạy **`install_autostart.bat`**: app tự chạy mỗi lần bạn đăng nhập Windows, và máy không tự ngủ khi cắm sạc.
+
+**Trên iPad/điện thoại:** cài app **Tailscale** (App Store), đăng nhập **cùng tài khoản**, bật kết nối, rồi mở link ở bước 4. Lưu link vào màn hình chính để dùng lần sau.
+
+Lưu ý:
+- Máy nhà phải **đang bật, không ngủ và có mạng** khi bạn dùng. Đóng nắp laptop thường làm máy ngủ: đổi bằng `powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0` rồi `powercfg /setactive SCHEME_CURRENT` (khi cắm sạc đóng nắp sẽ không ngủ; chú ý nhiệt độ).
+- App chỉ lắng nghe trên địa chỉ Tailscale, không mở ra mạng nhà hay Internet. Vẫn đừng chia sẻ link vì nó chứa mã truy cập.
+- Muốn có địa chỉ **https** (một số tính năng của trình duyệt chỉ chạy trên https, ví dụ nút Chia sẻ): bật HTTPS trong trang quản trị Tailscale rồi dùng `tailscale serve` (cú pháp lệnh khác nhau giữa các phiên bản, xem `tailscale serve --help`).
+- `start_tailscale.bat` và `install_autostart.bat` chưa được thử trên Windows thật: nếu lỗi, bạn chụp màn hình cửa sổ lệnh gửi lại.
