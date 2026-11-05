@@ -54,5 +54,7 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 
 - Công cụ riêng (`studio/tools.py` + mục "Công cụ" ở `static/`): ghép (`merge`: copy nếu cùng `_sig` codec/kích thước/pix_fmt/fps/âm thanh, ngược lại concat filter + anullsrc cho video không tiếng), cắt (`cut`: `-c copy` nhanh hoặc libx264 chính xác, nhiều đoạn, tuỳ chọn nối), tách MP3 (libmp3lame). API `/api/tools/*`: `sources`, `source` (đăng ký → `sid`), `frame/<sid>`, `upload`, `merge|cut|audio` (tác vụ nền key `_tools`), `task`, `outputs`, `file/<name>`. Tải link dùng chung `/api/import_url` với `to:"tools"`. File ở `tools/in` và `tools/out` (gitignore); kết quả chép thêm vào `EXPORT_DIR`. `runTask(root,onDone,btn,base)` poll theo `root._poll`.
 
+- Chữ mỏng (đo 5/11, video thử 43 câu, chữ trắng KHÔNG đậm): lỗi cũ là `medianBlur(3)` trong `_text_mask` xoá nét 1px và chỉ đọc ảnh nhị phân. Sửa: bỏ median, thêm ứng viên `_prep_gray` (ảnh xám phóng to ~120px, kéo giãn tương phản) thử cuối chuỗi `run_jobs` (4 vòng). Đúng/43: viền mỏng 14→34, không viền 22→34, mỏng trên nền sáng 25→42, chữ nhỏ 40→43; chữ đậm vẫn 43. Mức cực khó (trắng mỏng trên nền xám sáng, viền 0,6px) vẫn ~80%.
+
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.

@@ -178,8 +178,8 @@ def _ocr_png(png, lang, tess):
 def _text_mask(sub, thr):
     """Mặt nạ chữ sáng theo độ tương phản cục bộ (top-hat), không phụ thuộc chữ phải trắng tuyệt đối:
     chữ hơi xám, đang mờ dần, bị nén hay nằm trên nền sáng vẫn được giữ; mảng sáng lớn của nền bị loại.
-    thr (mặc định 210) càng thấp càng nhạy."""
-    g = cv2.medianBlur(cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY), 3)  # giảm nhiễu nén
+    thr (mặc định 210) càng thấp càng nhạy. Không làm mờ trung vị vì nó xoá mất nét chữ mỏng 1 pixel."""
+    g = cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY)
     k = max(7, int(round(sub.shape[0] * 0.2)) | 1)
     top = g.astype(np.int16) - cv2.morphologyEx(g, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))).astype(np.int16)
     t = int(np.clip(thr - 165, 15, 100))
@@ -196,6 +196,19 @@ def _text_mask(sub, thr):
     small = np.isin(lab, [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] <= 4])
     m[small] = 0  # bỏ đốm nhiễu
     return m, np.clip(top * (255.0 / max(60.0, float(top[m > 0].max()) if m.any() else 60.0)), 0, 255).astype(np.uint8)
+
+
+def _prep_gray(sub):
+    """Ảnh xám gốc phóng to + kéo giãn tương phản: hợp chữ rất mỏng/viền mỏng trên nền sáng (Tesseract tự đọc nét viền tối)."""
+    g = cv2.cvtColor(sub, cv2.COLOR_BGR2GRAY)
+    f = max(1, int(np.ceil(120.0 / g.shape[0])))
+    if f > 1:
+        g = cv2.resize(g, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+    lo, hi = np.percentile(g, (2, 98))
+    g = np.clip((g.astype(np.float32) - lo) * (255.0 / max(1.0, hi - lo)), 0, 255).astype(np.uint8)
+    g = cv2.copyMakeBorder(g, 12, 12, 16, 16, cv2.BORDER_REPLICATE)
+    ok, buf = cv2.imencode(".png", g)
+    return buf.tobytes()
 
 
 def _prep_png(mask, soft=None):
@@ -279,7 +292,7 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
                 continue
             sub = img[a - ymin: z - ymin]
             mask, soft = _text_mask(sub, thr)
-            if mask.sum() < sub.shape[0] * sub.shape[1] * 0.002:
+            if mask.sum() < mask.size * 0.002:
                 out.append(False)
                 continue
             key = cv2.resize(mask, (max(1, W // 3), max(1, sub.shape[0] // 3)), interpolation=cv2.INTER_AREA).astype(np.float32)
@@ -290,7 +303,7 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
         """Đọc một lô job: vòng 1 cho tất cả, chỉ job chưa đủ chắc mới thử phiên bản ảnh kế tiếp (gom lô theo ngôn ngữ)."""
         best = {j: ("", 0.0) for j in idx}
         pending = list(idx)
-        for rnd in range(3):
+        for rnd in range(4):
             if task is not None and task.cancel:
                 return
             pending = [j for j in pending if rnd < len(jobs[j][1]) and not (best[j][1] >= 86.0 and len(best[j][0]) >= 3)]
@@ -334,6 +347,7 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
                             if 0.002 < white.mean() < 0.25:
                                 pngs.append(_prep_png(white))
                             pngs += [_prep_png(mask), _prep_png(mask, soft)]
+                            pngs.append(_prep_gray(sub))  # cách đọc dự phòng cho chữ rất mỏng/viền mỏng
                             jobs.append((bi, pngs))
                             last_job[bi] = len(jobs) - 1
                             backlog.append(last_job[bi])
@@ -490,7 +504,7 @@ def probe_frame(video, info, bands, primary, t, thr=210, min_conf=40.0, seg_min=
             white = (sub.min(2) >= thr).astype(np.uint8)
             if 0.002 < white.mean() < 0.25:
                 pngs.append(_prep_png(white))
-            pngs += [_prep_png(mask), _prep_png(mask, soft)]
+            pngs += [_prep_png(mask), _prep_png(mask, soft), _prep_gray(sub)]
             text, conf = _ocr_best(pngs, b["lang"], tess, enough=101.0)
             item["text"], item["conf"] = _clean(text), round(conf, 1)
             if not item["text"]:
