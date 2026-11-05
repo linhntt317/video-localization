@@ -180,3 +180,13 @@ Tab **Trên máy bạn** trong mục Công cụ chạy ffmpeg ngay trong trình 
 - Kết quả chỉ nằm trong trang: bấm **Tải về** (hoặc **Lưu/Chia sẻ** nếu thiết bị hỗ trợ) ngay, tải lại trang là mất.
 - Lần đầu trình duyệt tải bộ ffmpeg khoảng 32 MB rồi giữ lại. iPhone/iPad giới hạn bộ nhớ mỗi tab chặt, tab có thể bị tắt khi xử lý file lớn: hãy chạy "Kiểm tra máy" trước, việc nặng dùng máy xử lý.
 - ffmpeg.wasm (@ffmpeg/ffmpeg 0.12.10, @ffmpeg/core 0.12.6) là mã nguồn mở của dự án ffmpegwasm; xem giấy phép của ffmpeg/x264 nếu bạn phân phối lại.
+
+## 11. Lồng tiếng (giọng đọc AI cho từng câu)
+
+Ở bước 3, bấm **🎙 Lồng tiếng**:
+1. Chọn giọng đọc, bấm **Tạo giọng cho câu chưa có**. Mỗi câu có một file giọng riêng (lưu trong thư mục dự án, câu không đổi chữ thì dùng lại).
+2. Mỗi câu hiện **độ khớp thời gian**: *Khớp tốt* (giọng vừa khung thời gian), *Tăng tốc xN* (giọng dài hơn nên tự tăng tốc), *Quá dài* (tăng tốc tối đa vẫn không kịp), cùng số ký tự, độ dài giọng và khung thời gian. Có nút **▶ Nghe** (phát theo đúng tốc độ), **− / +** chỉnh tốc độ tay, **Tự động**, **Tạo lại giọng**. Sửa chữ thì câu báo "Cần tạo lại giọng".
+3. **Rút gọn câu quá dài (Claude)**: nhờ Claude rút gọn các câu "Quá dài" cho vừa khung thời gian (dựa trên tốc độ đọc thật của giọng đó), rồi tự tạo lại giọng cho các câu đó. Cần API key Claude.
+4. Bước 4, nhóm **Lồng tiếng**: bật "Thêm giọng lồng tiếng", chọn xử lý tiếng gốc (tự nhỏ đi khi có giọng / nhỏ cố định / tắt hẳn / giữ nguyên), âm lượng, tăng tốc tối đa; rồi xuất video.
+
+Giọng đọc mặc định là **Edge TTS** (`pip install edge-tts`, Colab tự cài): miễn phí, giọng tiếng Việt Hoài My / Nam Minh, nhưng cần mạng và là dịch vụ **không chính thức** của Microsoft nên có thể bị chặn hoặc đổi. Muốn dùng nguồn giọng khác (Azure, ElevenLabs, OpenAI, FPT.AI...) chỉ cần viết một lớp có `synth(text, voice, out_path)` trong `studio/tts.py`.

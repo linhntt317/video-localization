@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from . import util
+from . import tts, util
 from .util import Cancelled
 
 DEFAULTS = {
@@ -20,6 +20,7 @@ DEFAULTS = {
     "sub": {"font": "DejaVu Sans", "size": 0.048, "outline": 3.2, "shadow": 1.2, "margin_v": 0.044,
             "margin_h": 0.083, "color": "#FFFFFF", "outline_color": "#000000"},
     "export": {"quality": "balanced", "resolution": "source", "audio_kbps": 192},
+    "dub": {"enabled": False, "orig": "duck", "vol": 1.0, "orig_vol": 0.3, "max_speed": 1.35},
 }
 
 QUALITY = {  # (preset, crf)
@@ -346,6 +347,15 @@ def render_final(video, info, cues, user_cfg, project_dir, out_name="final.mp4",
     W, H, top, sh = geometry(cfg, info)
     cb = cb or (lambda p, m=None: None)
 
+    dub_wav = None
+    if cfg["dub"]["enabled"]:
+        cb(0.0, "Ghép giọng lồng tiếng")
+        wav, placed = tts.build_track(cues, project_dir, info["duration"], volume=float(cfg["dub"]["vol"]),
+                                      max_speed=float(cfg["dub"].get("max_speed", 1.35)), task=task)
+        dub_wav = wav if placed else None
+        if not placed:
+            raise RuntimeError("Đã bật lồng tiếng nhưng chưa có giọng nào. Hãy tạo giọng ở bước 3 (nút Lồng tiếng) trước khi xuất.")
+
     cb(0.01, "Xoá sub cũ và làm nhoè nền")
     build_strip(video, info, cues, cfg, os.path.join(job, "strip.mp4"), task=task,
                 cb=lambda p: cb(0.01 + 0.39 * p, "Xoá sub cũ và làm nhoè nền"))
@@ -363,7 +373,26 @@ def render_final(video, info, cues, user_cfg, project_dir, out_name="final.mp4",
             inputs += ["-loop", "1", "-i", f"ov_{name}.png"]
             idx_map[name] = nxt
             nxt += 1
+    dub_idx = None
+    if dub_wav:
+        inputs += ["-i", os.path.abspath(dub_wav)]
+        dub_idx = nxt
+        nxt += 1
     graph = build_graph(cfg, info, assets, 1, 2, idx_map, enable)
+    if dub_idx is not None:
+        mode, ov = cfg["dub"]["orig"], float(cfg["dub"]["orig_vol"])
+        d = f"[{dub_idx}:a]aresample=48000,aformat=channel_layouts=stereo"
+        o = "[0:a:0]aresample=48000,aformat=channel_layouts=stereo"
+        if not info["has_audio"] or mode == "mute":
+            aud = f"{d}[aout]"
+        elif mode == "keep":
+            aud = f"{d}[dm];{o}[o];[o][dm]amix=inputs=2:duration=first:normalize=0[aout]"
+        elif mode == "low":
+            aud = f"{d}[dm];{o},volume={ov:.3f}[o];[o][dm]amix=inputs=2:duration=first:normalize=0[aout]"
+        else:  # duck: tiếng gốc tự nhỏ đi khi có giọng lồng, to lại khi hết
+            aud = (f"{d},asplit=2[dk][dm];{o}[o];[o][dk]sidechaincompress=threshold=0.01:ratio=20:attack=15:release=350:makeup=1[du];"
+                   f"[du][dm]amix=inputs=2:duration=first:normalize=0[aout]")
+        graph += ";\n" + aud
     with open(os.path.join(job, "graph.txt"), "w", encoding="utf-8") as f:
         f.write(graph)
 
@@ -371,11 +400,14 @@ def render_final(video, info, cues, user_cfg, project_dir, out_name="final.mp4",
     fr = info["fps"] or 30.0
     gop = max(12, int(round(fr * 2)))
     args = inputs + ["-filter_complex_script", "graph.txt", "-map", "[out]"]
-    if info["has_audio"]:
+    has_audio = info["has_audio"] or dub_idx is not None
+    if dub_idx is not None:
+        args += ["-map", "[aout]"]
+    elif info["has_audio"]:
         args += ["-map", "0:a:0"]
     args += ["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-profile:v", "high", "-pix_fmt", "yuv420p",
              "-g", str(gop), "-bf", "2", "-movflags", "+faststart", "-t", f"{info['duration']:.3f}"]
-    if info["has_audio"]:
+    if has_audio:
         args += ["-c:a", "aac", "-b:a", f"{int(cfg['export']['audio_kbps'])}k", "-ar", "48000", "-ac", "2"]
     out_abs = os.path.abspath(os.path.join(project_dir, out_name))
     args += [out_abs]

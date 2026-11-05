@@ -281,3 +281,9 @@ dialog::backdrop{background:rgba(2,8,5,.7);backdrop-filter:blur(6px);animation:f
 
 .lcvideo{width:100%;max-height:50vh;border-radius:12px;background:#000;margin:8px 0}
 .okline{color:#86efac}.badline{color:#fca5a5}
+
+.cue .dubrow{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center;border-top:1px dashed var(--line);padding-top:8px;font-size:13px;color:var(--mute)}
+.dbadge{padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600}
+.dbadge.ok{background:#4ade8026;color:var(--accent)}.dbadge.fast{background:#fbbf2426;color:var(--warm)}
+.dbadge.long,.dbadge.stale{background:#f8717129;color:#fca5a5}.dbadge.none{background:var(--panel2);color:var(--mute)}
+.dubrow .spd{display:inline-flex;align-items:center;gap:4px}.dubrow .spd b{min-width:48px;text-align:center;color:var(--text);font-variant-numeric:tabular-nums}

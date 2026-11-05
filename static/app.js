@@ -94,7 +94,7 @@ function deepSet(o, path, v) { const ks = path.split('.'); const l = ks.pop(); c
 function save(now = false) {
   if (!S.p) return;
   clearTimeout(S.saveT);
-  const go = () => api(`/api/p/${S.p.id}/save`, { json: { name: S.p.name, bands: S.p.bands, primary: S.p.primary, ocr: S.p.ocr, cues: S.p.cues, settings: S.p.settings, translate: S.p.translate } }).catch(e => toast('Lưu lỗi: ' + e.message, true));
+  const go = () => api(`/api/p/${S.p.id}/save`, { json: { name: S.p.name, bands: S.p.bands, primary: S.p.primary, ocr: S.p.ocr, cues: S.p.cues, settings: S.p.settings, translate: S.p.translate, dub: S.p.dub } }).catch(e => toast('Lưu lỗi: ' + e.message, true));
   if (now) return go();
   S.saveT = setTimeout(go, 500);
 }
@@ -236,7 +236,7 @@ async function openProject(id) {
   S.cur = 0;
   /* nếu đang có tác vụ chạy nền (vd. điện thoại khoá màn hình lúc đang quét/xuất) thì nối lại thanh tiến độ */
   const t = await api(`/api/p/${id}/task`).catch(() => null);
-  const R = { ocr: [2, '#ocrProg', onOcrDone, '#ocrBtn'], translate: [3, '#trProg', onTrDone, '#trBtn'], render: [4, '#rdProg', onRenderDone, '#renderBtn'], rescan: [3, '#rsProg', onRescanDone, '#rsBtn'], asr: [3, '#asrProg', onAsrDone, '#asrBtn'] }[t?.kind];
+  const R = { ocr: [2, '#ocrProg', onOcrDone, '#ocrBtn'], translate: [3, '#trProg', onTrDone, '#trBtn'], render: [4, '#rdProg', onRenderDone, '#renderBtn'], rescan: [3, '#rsProg', onRescanDone, '#rsBtn'], asr: [3, '#asrProg', onAsrDone, '#asrBtn'], tts: [3, '#dubProg', onDubDone, '#dubAll'], shorten: [3, '#dubProg', onDubDone, '#dubShort'] }[t?.kind];
   if (t?.state === 'running' && R) {
     S.maxStep = 4; setStep(R[0]);
     setTimeout(() => runTask($(R[1]), R[2], $(R[3])), 300);
@@ -424,7 +424,7 @@ async function onOcrDone(t) {
 }
 
 /* ---------------------------------------------------------------- bước 3 */
-function enter3() { renderCues(); updateStat(); initFinder(); }
+function enter3() { S.dubOn = S.dubOn ?? S.p.cues.some(c => c.dub); $('#dubPanel').hidden = !S.dubOn; renderCues(); updateStat(); initFinder(); if (S.dubOn) initDub(); }
 function updateStat() {
   const n = S.p.cues.filter(c => (c.vi || '').trim()).length, el = $('#statDone');
   if (el.textContent !== String(n)) { el.textContent = n; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
@@ -443,6 +443,7 @@ function renderCues(flashIdx = -1) {
       <div><textarea class="src" data-k="src" placeholder="Văn bản gốc">${esc(c.src)}</textarea>${c.ref ? `<small>Đối chiếu: ${esc(c.ref)}</small>` : ''}</div>
       <div><textarea class="vi" data-k="vi" placeholder="Bản dịch tiếng Việt">${esc(c.vi)}</textarea></div>
       <div class="acts"><button data-act="merge" title="Gộp với câu dưới">⤓</button><button data-act="del" title="Xoá câu">🗑</button></div>
+      ${S.dubOn ? `<div class="dubrow">${dubRowInner(c, i)}</div>` : ''}
     </div>`).join('');
   if (S.p.cues[S.cur]) showFrame3();
 }
@@ -457,6 +458,7 @@ $('#cues').addEventListener('input', e => {
   if (k === 'start' || k === 'end') c[k] = parseT(e.target.value); else c[k] = e.target.value;
   if (k === 'vi') updateStat();
   if (k === 'start' || k === 'end') drawTimeline();
+  if (S.dubOn && (k === 'vi' || k === 'start' || k === 'end')) refreshDubRow(+row.dataset.i);
   save();
 });
 $('#cues').addEventListener('change', e => { if (e.target.dataset.k === 'start' || e.target.dataset.k === 'end') e.target.value = fmt(S.p.cues[+e.target.closest('.cue').dataset.i][e.target.dataset.k]); });
@@ -680,6 +682,93 @@ async function deepScan(segs, btn) {
 }
 $('#asrRescan').onclick = () => { const m = asrUncovered(); if (m.length) deepScan(m, $('#asrRescan')); };
 
+
+/* ---------------------------------------------------------------- lồng tiếng (giọng đọc từng câu) */
+const spLen = t => (t || '').replace(/\s+/g, ' ').trim().length;
+function dubMax() { return +(cfg().dub?.max_speed || S.status.tts?.max_speed || 1.35); }
+function dubSlot(i) { const cs = S.p.cues, c = cs[i], gap = cs[i + 1] ? cs[i + 1].start - c.end : 0.5; return Math.max(0.2, (c.end - c.start) + Math.min(0.25, Math.max(0, gap))); }
+/* giống hệt tts.fit ở máy xử lý: trả về { speed, st } với st = none | stale | ok | fast | long */
+function dubFit(i) {
+  const c = S.p.cues[i], d = c.dub, slot = dubSlot(i);
+  if (!d || !d.dur) return { speed: 1, st: 'none', slot };
+  if (d.text !== c.vi) return { speed: 1, st: 'stale', slot };
+  let sp = d.user ? +d.user : (d.dur <= slot * 1.05 ? 1 : Math.min(dubMax(), d.dur / slot));
+  sp = Math.max(0.8, Math.min(2, sp));
+  const eff = d.dur / sp;
+  return { speed: Math.round(sp * 100) / 100, st: eff > slot * 1.05 ? 'long' : (sp <= 1.05 ? 'ok' : 'fast'), slot, eff };
+}
+const DB = { none: 'Chưa có giọng', stale: 'Cần tạo lại giọng', ok: 'Khớp tốt', fast: 'Tăng tốc', long: 'Quá dài' };
+function dubRowInner(c, i) {
+  const f = dubFit(i), d = c.dub;
+  const label = f.st === 'fast' ? `Tăng tốc x${f.speed.toFixed(2)}` : DB[f.st];
+  const info = d && d.dur ? `${spLen(c.vi)} ký tự · giọng ${d.dur.toFixed(1)}s · khung ${f.slot.toFixed(1)}s` : `${spLen(c.vi)} ký tự · khung ${f.slot.toFixed(1)}s`;
+  const ctl = d && d.dur && f.st !== 'stale' ? `<button class="btn mini" type="button" data-dub="play">▶ Nghe</button>
+    <span class="spd"><button class="btn mini" type="button" data-dub="slow">−</button><b>x${f.speed.toFixed(2)}${d.user ? '' : ' tự động'}</b><button class="btn mini" type="button" data-dub="fastr">+</button>${d.user ? '<button class="btn mini" type="button" data-dub="auto">Tự động</button>' : ''}</span>` : '';
+  return `<span class="dbadge ${f.st}">${label}</span><span>${info}</span>${ctl}<button class="btn mini" type="button" data-dub="regen">${d && d.dur ? 'Tạo lại giọng' : 'Tạo giọng'}</button>`;
+}
+function refreshDubRow(i) { const row = $('#cues').children[i], el = row && $('.dubrow', row); if (el) el.innerHTML = dubRowInner(S.p.cues[i], i); updateDubSummary(); }
+function updateDubSummary() {
+  if (!S.dubOn) return;
+  const n = { none: 0, stale: 0, ok: 0, fast: 0, long: 0 }; S.p.cues.forEach((c, i) => { if (spLen(c.vi)) n[dubFit(i).st]++; });
+  $('#dubSum').textContent = `${n.ok} khớp · ${n.fast} tăng tốc · ${n.long} quá dài · ${n.none + n.stale} chưa có giọng`;
+  $('#dubShort').disabled = !n.long;
+}
+async function initDub() {
+  const st = S.status.tts || {};
+  $('#dubMax').value = dubMax();
+  $('#dubHint').textContent = st.available ? 'Giọng đọc dùng Edge TTS (cần mạng, miễn phí, dịch vụ không chính thức của Microsoft). Tạo giọng xong, bật "Thêm giọng lồng tiếng" ở bước 4 rồi xuất video.' : 'Máy xử lý chưa cài edge-tts (Colab: chạy lại ô cài đặt mới nhất; máy tính: pip install edge-tts).';
+  $('#dubAll').disabled = $('#dubRedo').disabled = !st.available;
+  const sel = $('#dubVoice');
+  if (!sel.options.length) {
+    const r = await api('/api/tts/voices').catch(() => ({ voices: [], default: '' }));
+    sel.innerHTML = r.voices.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('');
+    sel.value = S.p.dub?.voice || r.default || r.voices[0]?.id;
+  } else sel.value = S.p.dub?.voice || sel.value;
+  updateDubSummary();
+}
+$('#dubBtn').onclick = () => { S.dubOn = !S.dubOn; $('#dubPanel').hidden = !S.dubOn; renderCues(); if (S.dubOn) initDub(); };
+$('#dubVoice').onchange = () => { S.p.dub = { ...(S.p.dub || {}), voice: $('#dubVoice').value }; save(); };
+$('#dubMax').onchange = () => { S.p.settings ||= {}; deepSet(S.p.settings, 'dub.max_speed', Math.max(1, Math.min(2, +$('#dubMax').value || 1.35))); save(); renderCues(); updateDubSummary(); };
+async function startDub(indices, force) {
+  try { await save(true); await api(`/api/p/${S.p.id}/tts/synth`, { json: { voice: $('#dubVoice').value, indices, force } }); }
+  catch (e) { return toast(e.message, true); }
+  runTask($('#dubProg'), onDubDone, $('#dubAll'));
+}
+async function onDubDone(t) {
+  S.p = await api('/api/p/' + S.p.id); renderCues(); updateStat(); updateDubSummary();
+  const r = t.result || {};
+  if (t.kind === 'shorten' || r.shortened != null) toast(r.long ? `Đã rút gọn ${r.shortened}/${r.long} câu quá dài và tạo lại giọng.` : 'Không có câu nào quá dài.');
+  else toast(r.failed ? `Xong, còn ${r.failed} câu chưa tạo được giọng.` : `Đã tạo giọng cho ${r.cues ?? 0} câu.`, !!r.failed);
+}
+$('#dubAll').onclick = () => startDub(S.p.cues.map((c, i) => i).filter(i => spLen(S.p.cues[i].vi) && ['none', 'stale'].includes(dubFit(i).st)), false);
+$('#dubRedo').onclick = () => { if (confirm('Tạo lại giọng cho tất cả các câu (giữ tốc độ bạn đã chỉnh nếu chữ không đổi)?')) startDub(null, true); };
+$('#dubShort').onclick = async () => {
+  let key = lsGet('vl_key') || prompt('Dán API key Claude để rút gọn các câu quá dài (không lưu lại):') || '';
+  key = key.trim(); if (!key) return;
+  try { await save(true); await api(`/api/p/${S.p.id}/shorten`, { json: { api_key: key, model: S.p.translate?.model || S.status.default_model } }); }
+  catch (e) { return toast(e.message, true); }
+  runTask($('#dubProg'), onDubDone, $('#dubShort'));
+};
+let dubAudio = null;
+$('#cues').addEventListener('click', async e => {
+  const b = e.target.closest('[data-dub]'); if (!b) return;
+  e.stopPropagation();
+  const row = b.closest('.cue'), i = +row.dataset.i, c = S.p.cues[i], act = b.dataset.dub;
+  if (act === 'play') {
+    const f = dubFit(i); dubAudio?.pause();
+    dubAudio = new Audio(U(`/api/p/${S.p.id}/tts/audio/${c.dub.key}`)); dubAudio.playbackRate = f.speed; dubAudio.play().catch(err => toast('Không phát được: ' + err.message, true));
+  } else if (act === 'slow' || act === 'fastr') {
+    const f = dubFit(i); c.dub.user = Math.max(0.8, Math.min(2, +(f.speed + (act === 'fastr' ? 0.05 : -0.05)).toFixed(2))); save(); refreshDubRow(i);
+  } else if (act === 'auto') { c.dub.user = null; save(); refreshDubRow(i); }
+  else if (act === 'regen') {
+    if (!spLen(c.vi)) return toast('Câu này chưa có bản dịch để đọc.', true);
+    b.disabled = true; b.textContent = 'Đang tạo...';
+    try { await save(true); c.dub = await api(`/api/p/${S.p.id}/tts/cue`, { json: { i, voice: $('#dubVoice').value, force: true } }); }
+    catch (err) { toast(err.message, true); }
+    refreshDubRow(i);
+  }
+}, true);
+
 /* nhập SRT */
 $('#impBtn').onclick = () => { $('#impText').value = ''; $('#impFile').value = ''; $('#dlgImp').showModal(); };
 $('#impFile').onchange = async e => {
@@ -736,6 +825,13 @@ const SCHEMA = [
     ['sub.margin_v', 'range', 'Cách đáy (% chiều cao)', { min: 1, max: 20, step: .2, mul: 100 }],
     ['sub.color', 'color', 'Màu chữ'],
     ['sub.outline_color', 'color', 'Màu viền'],
+  ]],
+  ['Lồng tiếng', false, [
+    ['dub.enabled', 'toggle', 'Thêm giọng lồng tiếng vào video (tạo giọng ở bước 3)'],
+    ['dub.orig', 'select', 'Tiếng gốc', { opts: { duck: 'Tự nhỏ đi khi có giọng lồng', low: 'Nhỏ cố định', mute: 'Tắt hẳn', keep: 'Giữ nguyên' } }],
+    ['dub.vol', 'range', 'Âm lượng giọng lồng (%)', { min: 50, max: 200, step: 5, mul: 100 }],
+    ['dub.orig_vol', 'range', 'Âm lượng tiếng gốc khi chọn "Nhỏ cố định" (%)', { min: 0, max: 100, step: 5, mul: 100 }],
+    ['dub.max_speed', 'range', 'Tăng tốc giọng tối đa (x)', { min: 1, max: 2, step: 0.05 }],
   ]],
   ['Chất lượng xuất', false, [
     ['export.quality', 'select', 'Chất lượng', { opts: { fast: 'Nhanh (file nhẹ hơn)', balanced: 'Cân bằng', best: 'Đẹp nhất (chậm)' } }],

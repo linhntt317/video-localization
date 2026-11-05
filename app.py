@@ -12,7 +12,7 @@ import webbrowser
 
 from flask import Flask, Response, abort, jsonify, request, send_file
 
-from studio import asr, ocr, render, srt, tools, translate, util
+from studio import asr, ocr, render, srt, tools, translate, tts, util
 from studio.util import Cancelled
 
 ROOT = util.ROOT
@@ -213,6 +213,7 @@ def status():
         "fonts": sorted(render.list_fonts().keys()), "defaults": render.DEFAULTS,
         "default_rules": translate.DEFAULT_RULES, "default_model": translate.DEFAULT_MODEL,
         "media": bool(MEDIA_DIR), "export_dir": EXPORT_DIR,
+        "tts": {"available": tts.available(), "default_voice": tts.DEFAULT_VOICE, "max_speed": tts.MAX_SPEED},
         "asr": {"available": asr.available(), "device": asr.device(), "default_model": asr.default_model(), "models": asr.MODELS},
     })
 
@@ -450,7 +451,7 @@ def delete_project(pid):
 def save_project(pid):
     p = load(pid)
     body = request.get_json(force=True)
-    for k in ("name", "bands", "primary", "ocr", "cues", "settings", "translate"):
+    for k in ("name", "bands", "primary", "ocr", "cues", "settings", "translate", "dub"):
         if k in body:
             p[k] = body[k]
     save(p)
@@ -863,6 +864,137 @@ def check(pid):
     if not os.path.isfile(f):
         return err("Chưa có video đã xuất.", 404)
     return jsonify({"checks": render.check_youtube(f)})
+
+
+
+# ---------------------------------------------------------------- lồng tiếng (giọng đọc cho từng câu)
+_VOICES = {}
+
+
+@app.get("/api/tts/voices")
+def tts_voices():
+    if "v" not in _VOICES:
+        _VOICES["v"] = tts.voices()
+    return jsonify({"available": tts.available(), "voices": _VOICES["v"], "default": tts.DEFAULT_VOICE})
+
+
+def _need_tts():
+    if not tts.available():
+        return "Máy xử lý chưa cài edge-tts (giọng đọc). Colab: chạy lại ô cài đặt mới nhất; máy tính: pip install edge-tts."
+    return None
+
+
+@app.post("/api/p/<pid>/tts/synth")
+def tts_synth(pid):
+    """Tạo giọng đọc cho nhiều câu (mặc định mọi câu có bản dịch). Câu đã có giọng giống hệt thì dùng lại, trừ khi force."""
+    e = _need_tts()
+    if e:
+        return err(e)
+    p = load(pid)
+    body = request.get_json(force=True)
+    voice = body.get("voice") or tts.DEFAULT_VOICE
+    if "cues" in body:
+        p["cues"] = body["cues"]
+    p["dub"] = {**(p.get("dub") or {}), "voice": voice}
+    save(p)
+    idxs, force = body.get("indices"), bool(body.get("force"))
+
+    def work(task):
+        q = load(pid)
+        idx = [int(i) for i in idxs] if idxs is not None else list(range(len(q["cues"])))
+        failed = tts.synth_many(pdir(pid), q["cues"], idx, voice, force, task=task, cb=task.set)
+        save(q)
+        task.result = {"failed": failed, "cues": sum(1 for c in q["cues"] if c.get("dub"))}
+
+    if not start_task(pid, "tts", work):
+        return err("Đang có tác vụ khác chạy.", 409)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/p/<pid>/tts/cue")
+def tts_cue(pid):
+    """Tạo lại giọng cho một câu (nút 'Tạo lại giọng')."""
+    e = _need_tts()
+    if e:
+        return err(e)
+    p = load(pid)
+    body = request.get_json(force=True)
+    i = int(body.get("i", -1))
+    if not (0 <= i < len(p["cues"])):
+        return err("Câu không tồn tại.", 404)
+    voice = body.get("voice") or (p.get("dub") or {}).get("voice") or tts.DEFAULT_VOICE
+    try:
+        d = tts.synth_cue(pdir(pid), voice, p["cues"][i].get("vi", ""), force=bool(body.get("force", True)))
+    except Exception as ex:  # noqa
+        return err(str(ex), 500)
+    if not d:
+        return err("Câu này chưa có bản dịch để đọc.")
+    old = p["cues"][i].get("dub") or {}
+    d["user"] = old.get("user") if old.get("text") == d["text"] else None
+    p["cues"][i]["dub"] = d
+    save(p)
+    return jsonify(d)
+
+
+@app.get("/api/p/<pid>/tts/audio/<key>")
+def tts_audio(pid, key):
+    if not re.fullmatch(r"[a-f0-9]{16}", key):
+        abort(404)
+    f = tts.audio_path(pdir(pid), key)
+    if not os.path.isfile(f):
+        abort(404)
+    return send_file(f, mimetype="audio/mpeg", conditional=True)
+
+
+@app.post("/api/p/<pid>/shorten")
+def run_shorten(pid):
+    """Nhờ Claude rút gọn các câu có giọng đọc quá dài so với khung thời gian, rồi tạo lại giọng cho các câu đó."""
+    p = load(pid)
+    body = request.get_json(force=True)
+    key = (body.get("api_key") or "").strip()
+    if not key:
+        return err("Chưa nhập API key Claude.")
+    e = _need_tts()
+    if e:
+        return err(e)
+    if "cues" in body:
+        p["cues"] = body["cues"]
+    save(p)
+    model = body.get("model") or translate.DEFAULT_MODEL
+    max_speed = float(((p.get("settings") or {}).get("dub") or {}).get("max_speed", tts.MAX_SPEED))
+    voice = (p.get("dub") or {}).get("voice") or tts.DEFAULT_VOICE
+
+    def work(task):
+        q = load(pid)
+        cs, items = q["cues"], []
+        for i, c in enumerate(cs):
+            sp, st = tts.fit(c, tts.slot_of(cs, i), max_speed)
+            d = c.get("dub")
+            if st != "long" or not d or d.get("text") != c.get("vi"):
+                continue
+            rate = len(tts.speech_text(c["vi"])) / max(0.2, d["dur"])  # ký tự mỗi giây của giọng này ở tốc độ thường
+            items.append({"id": str(i), "text": c["vi"], "source": c.get("src", ""),
+                          "max_chars": max(4, int(tts.slot_of(cs, i) * max_speed * 0.95 * rate))})
+        task.result = {"shortened": 0, "long": len(items)}
+        if not items:
+            return
+        out = translate.shorten_cues(items, key, model, task=task, cb=lambda pr, msg: task.set(pr * 0.5, msg))
+        changed = []
+        for it in items:
+            v = out.get(it["id"])
+            if v and v != cs[int(it["id"])]["vi"]:
+                cs[int(it["id"])]["vi"] = v
+                cs[int(it["id"])]["dub"] = None
+                changed.append(int(it["id"]))
+        save(q)
+        if changed:
+            tts.synth_many(pdir(pid), cs, changed, voice, True, task=task, cb=lambda pr, msg: task.set(0.5 + 0.5 * pr, msg))
+            save(q)
+        task.result = {"shortened": len(changed), "long": len(items)}
+
+    if not start_task(pid, "shorten", work):
+        return err("Đang có tác vụ khác chạy.", 409)
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------- công cụ riêng: ghép video, cắt video, tách MP3

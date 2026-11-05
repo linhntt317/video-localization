@@ -126,3 +126,36 @@ def apply_srt(cues, text):
             c["vi"] = best["text"]
             used += 1
     return used, "theo thời gian"
+
+
+SHORTEN_SYSTEM = """Bạn là biên tập viên phụ đề lồng tiếng tiếng Việt.
+Bạn nhận các câu thoại tiếng Việt đã dịch nhưng giọng đọc không kịp trong khung thời gian. Hãy RÚT GỌN từng câu cho đọc vừa
+khung thời gian, giữ đúng ý chính, xưng hô và tên riêng, văn nói tự nhiên.
+Mỗi mục có "id", "text" (câu hiện tại), "source" (câu gốc để đối chiếu, có thể rỗng) và "max_chars" (số ký tự tối đa gợi ý, tính cả dấu cách).
+Yêu cầu: câu rút gọn KHÔNG dài hơn max_chars quá 10%, không giải thích, không thêm ghi chú.
+Chỉ trả về MỘT JSON object duy nhất dạng {"<id>": "<câu rút gọn>"} cho tất cả id được đưa."""
+
+
+def shorten_cues(items, api_key, model=None, batch=30, task=None, cb=None):
+    """items: [{id, text, source, max_chars}]. Trả về {id: câu rút gọn}."""
+    out_all = {}
+    for i in range(0, len(items), batch):
+        if task is not None and task.cancel:
+            raise Cancelled()
+        chunk = items[i:i + batch]
+        out = None
+        for attempt in range(2):
+            try:
+                out = _parse_json(_call(api_key, model or DEFAULT_MODEL, SHORTEN_SYSTEM, json.dumps(chunk, ensure_ascii=False)))
+                break
+            except ValueError:
+                continue
+        if out is None:
+            raise RuntimeError("Claude trả về dữ liệu không đọc được, thử lại sau.")
+        for c in chunk:
+            v = out.get(str(c["id"]))
+            if isinstance(v, str) and v.strip():
+                out_all[str(c["id"])] = v.strip()
+        if cb:
+            cb(min(1.0, (i + len(chunk)) / max(1, len(items))), f"Đã rút gọn {min(i + batch, len(items))}/{len(items)} câu")
+    return out_all

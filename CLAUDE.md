@@ -58,5 +58,8 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 
 - Xử lý trên trình duyệt (tab "Trên máy bạn", `static/vendor/ffmpeg/` = @ffmpeg/ffmpeg 0.12.10 esm + @ffmpeg/core 0.12.6 đơn luồng, wasm 32MB, phục vụ cùng origin, `Cache-Control` 30 ngày, `.wasm` mimetype trong app.py). `lcWith` gắn `File` bằng WORKERFS (không nạp cả file), `lcExec`/`lcRead`; chỉ cắt `-c copy` (+nối concat) và `libmp3lame`. Đã kiểm thử trên Chromium headless (file 250MB cắt 10s trong ~1s), **chưa thử trên Safari/iPad thật**; không dùng được khi giao diện chạy từ Vercel (không có /vendor).
 
+- Lồng tiếng (`studio/tts.py`, edge-tts; `tts.ENGINE` thay được): mỗi cue có `dub={key,dur,voice,text,user}`, file `projects/<pid>/tts/<key>.mp3`; `tts.fit(cue, slot)` quyết định tốc độ/trạng thái (ok|fast|long|none) và PHẢI khớp `dubFit()` trong app.js; slot = độ dài câu + tối đa 0,25s khoảng trống. `build_track` ghép mọi giọng (atempo) vào `tts/track.wav`; `render_final` trộn bằng sidechaincompress (duck) / volume / amix theo `settings.dub`. API: `/api/tts/voices`, `/api/p/<pid>/tts/synth|cue|audio/<key>`, `/api/p/<pid>/shorten` (Claude rút gọn + tạo lại giọng). `project["dub"]={voice}`. Đã kiểm thử bằng giọng giả (tần số theo câu): giọng đúng chỗ, tiếng gốc giảm ~7 lần khi có giọng; **chưa chạy Edge TTS thật** (sandbox chặn mạng ra ngoài) và chưa nghe thử bằng tai.
+- Hướng phát triển giống 4kstudio.vn (chỉ xem ảnh trang chủ, 5/11): đã có OCR/dịch/làm mờ/logo/phụ đề/lồng tiếng; chưa có timeline phụ đề, dán link Douyin/TikTok/YouTube (yt-dlp), tài khoản/credits (người dùng chọn dùng cá nhân trước).
+
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.
