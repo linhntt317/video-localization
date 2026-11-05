@@ -27,3 +27,5 @@ dialog{width:calc(100vw - 24px);max-width:calc(100vw - 24px);max-height:90vh;ove
 #toasts{left:12px;right:12px}
 .toast{max-width:none}
 }
+
+@media (max-width:700px){.tseg{grid-template-columns:auto 1fr 1fr}.tseg .bt{grid-column:1/-1;justify-content:flex-start}.seg button{padding:8px 12px}}

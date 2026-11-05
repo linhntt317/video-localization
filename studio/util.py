@@ -97,7 +97,9 @@ def probe(path):
     if not vs:
         raise RuntimeError("File không có luồng video.")
     v = vs[0]
-    has_audio = any(s.get("codec_type") == "audio" for s in j.get("streams", []))
+    aus = [s for s in j.get("streams", []) if s.get("codec_type") == "audio"]
+    has_audio = bool(aus)
+    au = aus[0] if aus else {}
 
     def rate(s):
         try:
@@ -117,6 +119,7 @@ def probe(path):
         "width": int(v["width"]), "height": int(v["height"]),
         "fps": round(rate(fps_str), 3), "fps_str": fps_str,
         "duration": dur, "has_audio": has_audio,
+        "acodec": au.get("codec_name"), "a_rate": int(au.get("sample_rate") or 0), "a_channels": int(au.get("channels") or 0),
         "codec": v.get("codec_name"), "pix_fmt": v.get("pix_fmt"),
         "bit_rate": int(j.get("format", {}).get("bit_rate") or 0),
         "size": int(j.get("format", {}).get("size") or 0),

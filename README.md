@@ -163,3 +163,11 @@ Tháng 11/2026, Hugging Face yêu cầu gói trả phí (PRO) cho Space loại D
 **Đối chiếu ngay khi quét OCR:** ở bước 2, tick **"Đối chiếu bằng giọng nói (Whisper) ngay sau khi quét OCR"**. Một lần bấm "Quét OCR" sẽ chạy: OCR → Whisper nghe video → tự quét lại OCR (ngưỡng thấp hơn) đúng những đoạn có tiếng nói mà chưa có câu → (tuỳ chọn) tự thêm các đoạn vẫn thiếu bằng chữ Whisper, có nhãn "từ Whisper". Nếu Whisper lỗi (chưa cài, không tải được mô hình) thì kết quả OCR vẫn được giữ và có thông báo.
 
 **Xác thực bằng OCR kỹ:** app không tự thêm chữ Whisper. Với mỗi đoạn Whisper nghe thấy tiếng mà chưa có câu, OCR quét lại thật kỹ đúng chỗ đó (nhiều mức nhạy, tốc độ khung cao, thử cả hai dòng) và chỉ thêm câu khi OCR thấy chữ thật (có nhãn "quét kỹ"). Đoạn nào OCR vẫn không thấy chữ (lời dẫn, nhạc có lời, hoặc phụ đề quá mờ) được giữ ở hàng đỏ để bạn xem và quyết định (Xem / Quét kỹ / + Thêm bằng chữ Whisper).
+
+## 10. Công cụ riêng: ghép video, cắt video, tách MP3
+
+Bấm nút **Công cụ** ở góc trên (không dính vào quy trình 4 bước). Mỗi công cụ cho chọn video từ: thư mục Drive/máy xử lý, video của các dự án, file tải lên, link (trực tiếp hoặc Google Drive) hoặc đường dẫn trên máy xử lý. Kết quả nằm ở phần **Kết quả** (Tải về / Nghe, Xem / Xoá) và được chép thêm vào thư mục `exports` trên Drive nếu có đặt `EXPORT_DIR`.
+
+- **Ghép video:** chọn nhiều video, sắp thứ tự bằng ↑ ↓. Các video cùng định dạng (codec, độ phân giải, fps, âm thanh) được ghép **không mã hoá lại** (rất nhanh, giữ nguyên chất lượng). Khác định dạng thì tự mã hoá lại về cùng khung hình, video không có tiếng được chèn đoạn im lặng; có thể chọn 1080p/720p/480p.
+- **Cắt video:** kéo thanh xem trước để chọn điểm đầu/cuối cho từng đoạn, thêm nhiều đoạn, chọn mỗi đoạn một file hoặc nối thành một. **Cắt nhanh** (mặc định) không mã hoá lại nhưng điểm đầu có thể lệch về keyframe trước đó vài giây; tick **cắt chính xác** nếu cần đúng từng khung (chậm hơn).
+- **Tách MP3:** chọn chất lượng 96-320 kbps và (tuỳ chọn) khoảng thời gian. Video không có âm thanh sẽ báo lỗi.

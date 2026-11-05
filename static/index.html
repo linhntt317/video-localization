@@ -25,6 +25,7 @@
     <button data-step="4"><i>4</i><span>Xuất video</span></button>
   </nav>
   <div class="chips" id="chips"></div>
+  <button class="chip srv" id="toolsBtn" type="button">Công cụ</button>
   <button class="chip srv" id="srvBtn" type="button">Máy xử lý</button>
 </header>
 
@@ -245,6 +246,81 @@
       </div>
     </div>
   </section>
+
+  <!-- ============ CÔNG CỤ RIÊNG ============ -->
+  <section class="step" id="tools" hidden>
+    <div class="seg" id="toolTabs">
+      <button type="button" data-tool="merge" class="on">Ghép video</button>
+      <button type="button" data-tool="cut">Cắt video</button>
+      <button type="button" data-tool="mp3">Tách MP3</button>
+    </div>
+    <div class="grid2 wide">
+      <div>
+        <div class="card rise" id="tool_merge">
+          <h2>Ghép nhiều video thành một</h2>
+          <div id="mgList" class="tlist"></div>
+          <button class="btn" id="mgAdd" type="button">+ Thêm video</button>
+          <p class="hint" id="mgTotal"></p>
+          <label>Tên file kết quả (không bắt buộc)<input type="text" id="mgName" placeholder="ghep"></label>
+          <label>Cách ghép
+            <select id="mgMode">
+              <option value="auto">Tự động (nhanh nếu các video cùng định dạng)</option>
+              <option value="copy">Chỉ ghép nhanh, không mã hoá lại (yêu cầu cùng định dạng)</option>
+              <option value="reencode">Mã hoá lại (đồng bộ mọi video, chậm hơn)</option>
+            </select></label>
+          <label>Độ phân giải khi mã hoá lại
+            <select id="mgRes"><option value="0">Theo video đầu tiên</option><option value="1080">1080p</option><option value="720">720p</option><option value="480">480p</option></select></label>
+          <button class="btn primary big" id="mgRun" type="button"><span class="spinner"></span><span class="lbl">Ghép video</span></button>
+        </div>
+        <div class="card rise" id="tool_cut" hidden>
+          <h2>Cắt video</h2>
+          <button class="btn" id="ctPick" type="button">Chọn video</button>
+          <p class="hint" id="ctInfo"></p>
+          <div id="ctBody" hidden>
+            <div class="viewer"><div class="skeleton" id="skelC"></div><img id="frameC" alt=""></div>
+            <input type="range" id="ctSlider" min="0" max="100" step="0.1">
+            <div class="row tl wrap">
+              <button class="btn mini" data-cseek="-5" type="button">−5s</button><button class="btn mini" data-cseek="-1" type="button">−1s</button>
+              <button class="btn mini" data-cseek="1" type="button">+1s</button><button class="btn mini" data-cseek="5" type="button">+5s</button>
+              <output id="ctOut">0:00</output>
+            </div>
+            <h3 style="margin-top:12px">Các đoạn cần giữ</h3>
+            <div id="ctSegs" class="tlist"></div>
+            <button class="btn" id="ctAdd" type="button">+ Thêm đoạn</button>
+            <label class="chk"><input type="checkbox" id="ctExact"> Cắt chính xác từng khung hình (mã hoá lại, chậm hơn). Bỏ tick = cắt nhanh, điểm đầu có thể lệch vài giây về keyframe trước đó.</label>
+            <label class="chk"><input type="checkbox" id="ctJoin"> Nối các đoạn thành một file (bỏ tick = mỗi đoạn một file)</label>
+            <label>Tên file kết quả (không bắt buộc)<input type="text" id="ctName" placeholder="tên video_cat"></label>
+            <button class="btn primary big" id="ctRun" type="button"><span class="spinner"></span><span class="lbl">Cắt video</span></button>
+          </div>
+        </div>
+        <div class="card rise" id="tool_mp3" hidden>
+          <h2>Tách âm thanh ra MP3</h2>
+          <button class="btn" id="mpPick" type="button">Chọn video</button>
+          <p class="hint" id="mpInfo"></p>
+          <div id="mpBody" hidden>
+            <div class="advgrid">
+              <label>Từ giây (để trống = từ đầu)<input type="text" id="mpA" placeholder="0:00"></label>
+              <label>Đến giây (để trống = hết)<input type="text" id="mpB" placeholder="hết"></label>
+              <label>Chất lượng<select id="mpBr"><option value="96">96 kbps (nhỏ)</option><option value="128">128 kbps</option><option value="192" selected>192 kbps</option><option value="256">256 kbps</option><option value="320">320 kbps (cao nhất)</option></select></label>
+            </div>
+            <label>Tên file kết quả (không bắt buộc)<input type="text" id="mpName" placeholder="tên video"></label>
+            <button class="btn primary big" id="mpRun" type="button"><span class="spinner"></span><span class="lbl">Tách MP3</span></button>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card rise" style="--i:1">
+          <h2>Kết quả</h2>
+          <div class="prog" id="toolProg" hidden>
+            <div class="bar"><i></i></div><div class="progrow"><span class="pm"></span><b class="pp">0%</b></div>
+            <button class="btn mini danger" data-cancel>Huỷ</button>
+          </div>
+          <p class="hint" id="toolExport" hidden></p>
+          <div id="toolOut" class="tlist"></div>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
 
 <!-- ============ HỘP THOẠI ============ -->
@@ -268,6 +344,25 @@
     <input type="file" id="impFile">
     <textarea id="impText" rows="10" placeholder="1&#10;00:00:02,000 --> 00:00:03,200&#10;Tôi tên là Chloe."></textarea>
     <div class="row end"><button value="cancel" class="btn ghost">Đóng</button><button value="go" class="btn primary" id="impGo">Nhập</button></div>
+  </form>
+</dialog>
+
+
+<dialog id="dlgPick">
+  <form method="dialog" class="dlg" id="pickForm">
+    <h2 id="pickTitle">Chọn video</h2>
+    <div id="pickBody" class="pickbody"></div>
+    <details class="adv"><summary>Thêm video mới (tải lên, link, đường dẫn)</summary>
+      <div class="pickadd">
+        <label>Tải từ điện thoại/máy tính (dưới ~100 MB qua tunnel)<input type="file" id="pkFile"></label>
+        <label>Dán link video (link trực tiếp hoặc Google Drive)
+          <span class="row"><input type="text" id="pkUrl" placeholder="https://..." autocapitalize="off" spellcheck="false"><button class="btn" id="pkUrlBtn" type="button">Tải về</button></span></label>
+        <p class="hint" id="pkMsg"></p>
+        <label>Đường dẫn có sẵn trên máy xử lý
+          <span class="row"><input type="text" id="pkPath" placeholder="/content/drive/MyDrive/..."><button class="btn" id="pkPathBtn" type="button">Dùng</button></span></label>
+      </div>
+    </details>
+    <div class="row end"><button value="cancel" class="btn ghost">Đóng</button><button value="go" class="btn primary" id="pickGo">Chọn</button></div>
   </form>
 </dialog>
 

@@ -12,7 +12,7 @@ import webbrowser
 
 from flask import Flask, Response, abort, jsonify, request, send_file
 
-from studio import asr, ocr, render, srt, translate, util
+from studio import asr, ocr, render, srt, tools, translate, util
 from studio.util import Cancelled
 
 ROOT = util.ROOT
@@ -302,47 +302,64 @@ def _project_dict(pid, name, path, info):
 
 
 # ---------------------------------------------------------------- tải video từ link (link trực tiếp hoặc Google Drive)
-DL = {"state": "idle", "message": "", "done": 0, "total": 0, "pid": None, "error": "", "cancel": False}
+DL = {"state": "idle", "message": "", "done": 0, "total": 0, "pid": None, "input": None, "error": "", "cancel": False}
 
 
-def _download(url):
+def _fetch(url, d, stem):
+    """Tải video từ link (trực tiếp hoặc Google Drive) vào thư mục d, cập nhật DL. Trả về (đường dẫn, tên file)."""
     import urllib.parse
     import urllib.request
-    DL.update(state="running", message="Đang bắt đầu tải", done=0, total=0, pid=None, error="", cancel=False)
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if host.endswith("drive.google.com") or host.endswith("docs.google.com"):
+        import gdown
+        DL["message"] = "Đang tải từ Google Drive (không hiện tiến độ)"
+        out = gdown.download(url=url, output=os.path.join(d, stem + "_dl"), quiet=True, fuzzy=True)
+        if not out or not os.path.isfile(out):
+            raise RuntimeError("Không tải được từ Google Drive. Hãy đặt file ở chế độ 'Bất kỳ ai có đường liên kết'.")
+        return out, os.path.basename(out)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        DL["total"] = int(r.headers.get("Content-Length") or 0)
+        cd = r.headers.get("Content-Disposition") or ""
+        m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)', cd)
+        name = os.path.basename(urllib.parse.unquote(m.group(1))) if m else os.path.basename(urllib.parse.unquote(urllib.parse.urlparse(url).path)) or "video.mp4"
+        if os.path.splitext(name)[1].lower() not in VIDEO_EXT:
+            name = (os.path.splitext(name)[0] or "video") + ".mp4"
+        path = os.path.join(d, stem + os.path.splitext(name)[1].lower())
+        DL["message"] = "Đang tải video về máy xử lý"
+        with open(path, "wb") as fo:
+            while True:
+                if DL["cancel"]:
+                    raise RuntimeError("Đã huỷ")
+                b = r.read(8 << 20)
+                if not b:
+                    break
+                fo.write(b)
+                DL["done"] += len(b)
+    return path, name
+
+
+def _download(url, to="project"):
+    DL.update(state="running", message="Đang bắt đầu tải", done=0, total=0, pid=None, input=None, error="", cancel=False)
+    if to == "tools":
+        os.makedirs(TOOLS_IN, exist_ok=True)
+        try:
+            tmp = os.path.join(TOOLS_IN, "dl_" + uuid.uuid4().hex[:6])
+            os.makedirs(tmp)
+            path, name = _fetch(url, tmp, "src")
+            final = unique_path(TOOLS_IN, safe_name(name))
+            os.replace(path, final)
+            shutil.rmtree(tmp, ignore_errors=True)
+            DL.update(state="done", input=os.path.basename(final), message="Xong")
+        except Exception as e:  # noqa
+            shutil.rmtree(tmp, ignore_errors=True)
+            DL.update(state="error", error=str(e) or "Tải lỗi")
+        return
     pid = uuid.uuid4().hex[:10]
     d = os.path.join(PROJ_DIR, pid)
     os.makedirs(os.path.join(d, "assets"), exist_ok=True)
     try:
-        host = (urllib.parse.urlparse(url).hostname or "").lower()
-        if host.endswith("drive.google.com") or host.endswith("docs.google.com"):
-            import gdown
-            DL["message"] = "Đang tải từ Google Drive (không hiện tiến độ)"
-            out = gdown.download(url=url, output=os.path.join(d, "source_dl"), quiet=True, fuzzy=True)
-            if not out or not os.path.isfile(out):
-                raise RuntimeError("Không tải được từ Google Drive. Hãy đặt file ở chế độ 'Bất kỳ ai có đường liên kết'.")
-            name = os.path.basename(out)
-            path = out
-        else:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=30) as r:
-                DL["total"] = int(r.headers.get("Content-Length") or 0)
-                cd = r.headers.get("Content-Disposition") or ""
-                m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)', cd)
-                name = os.path.basename(urllib.parse.unquote(m.group(1))) if m else os.path.basename(urllib.parse.unquote(urllib.parse.urlparse(url).path)) or "video.mp4"
-                ext = os.path.splitext(name)[1].lower()
-                if ext not in VIDEO_EXT:
-                    name = (os.path.splitext(name)[0] or "video") + ".mp4"
-                path = os.path.join(d, "source" + os.path.splitext(name)[1].lower())
-                DL["message"] = "Đang tải video về máy xử lý"
-                with open(path, "wb") as fo:
-                    while True:
-                        if DL["cancel"]:
-                            raise RuntimeError("Đã huỷ")
-                        b = r.read(8 << 20)
-                        if not b:
-                            break
-                        fo.write(b)
-                        DL["done"] += len(b)
+        path, name = _fetch(url, d, "source")
         info = util.probe(path)
         save(_project_dict(pid, name, path, info))
         DL.update(state="done", pid=pid, message="Xong")
@@ -359,7 +376,7 @@ def import_url():
     if DL["state"] == "running":
         return err("Đang tải một video khác.", 409)
     DL["state"] = "running"
-    threading.Thread(target=_download, args=(url,), daemon=True).start()
+    threading.Thread(target=_download, args=(url, (request.get_json(silent=True) or {}).get("to") or "project"), daemon=True).start()
     return jsonify({"ok": True})
 
 
@@ -840,6 +857,281 @@ def check(pid):
     if not os.path.isfile(f):
         return err("Chưa có video đã xuất.", 404)
     return jsonify({"checks": render.check_youtube(f)})
+
+
+# ---------------------------------------------------------------- công cụ riêng: ghép video, cắt video, tách MP3
+TOOLS_DIR = os.path.join(ROOT, "tools")
+TOOLS_IN = os.path.join(TOOLS_DIR, "in")
+TOOLS_OUT = os.path.join(TOOLS_DIR, "out")
+os.makedirs(TOOLS_IN, exist_ok=True)
+os.makedirs(TOOLS_OUT, exist_ok=True)
+SRC_REG = {}  # sid -> {"path","name","info"}
+
+
+def safe_name(name, default="video"):
+    n = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", os.path.basename(name or "")).strip(" .")
+    return n or default
+
+
+def unique_path(d, name):
+    base, ext = os.path.splitext(name)
+    f, i = os.path.join(d, name), 2
+    while os.path.exists(f):
+        f = os.path.join(d, f"{base}_{i}{ext}")
+        i += 1
+    return f
+
+
+def resolve_source(src):
+    """Đổi mô tả nguồn video ({media|project|input|path}) thành đường dẫn thật, kiểm tra an toàn."""
+    src = src or {}
+    if src.get("media"):
+        f = media_path(src["media"])
+    elif src.get("project"):
+        f = load(src["project"]).get("video")
+    elif src.get("input"):
+        f = os.path.join(TOOLS_IN, os.path.basename(src["input"]))
+    elif src.get("path"):
+        f = str(src["path"]).strip().strip('"')
+    else:
+        f = None
+    if not f or not os.path.isfile(f):
+        raise ValueError("Không tìm thấy file video đã chọn (có thể máy xử lý vừa khởi động lại). Hãy chọn lại.")
+    return f
+
+
+def reg_source(src):
+    f = resolve_source(src)
+    info = util.probe(f)
+    sid = uuid.uuid5(uuid.NAMESPACE_URL, os.path.realpath(f)).hex[:12]
+    SRC_REG[sid] = {"path": f, "name": os.path.basename(f), "info": info}
+    return sid, SRC_REG[sid]
+
+
+def src_by_sid(sid):
+    r = SRC_REG.get(sid)
+    if not r or not os.path.isfile(r["path"]):
+        raise ValueError("Video đã chọn không còn. Hãy chọn lại.")
+    return r
+
+
+def src_view(sid, r):
+    i = r["info"]
+    return {"sid": sid, "name": r["name"], "duration": i["duration"], "width": i["width"], "height": i["height"],
+            "has_audio": i["has_audio"], "codec": i["codec"], "size": i["size"] or os.path.getsize(r["path"])}
+
+
+@app.get("/api/tools/sources")
+def tools_sources():
+    media = []
+    if MEDIA_DIR and os.path.isdir(MEDIA_DIR):
+        base = os.path.realpath(MEDIA_DIR)
+        for root, _, files in os.walk(base):
+            if root[len(base):].count(os.sep) > 2:
+                continue
+            for fn in files:
+                if fn.lower().endswith(VIDEO_EXT):
+                    f = os.path.join(root, fn)
+                    media.append({"name": os.path.relpath(f, base), "size": os.path.getsize(f), "mtime": os.path.getmtime(f)})
+    media.sort(key=lambda x: -x["mtime"])
+    projects = []
+    for d in os.listdir(PROJ_DIR):
+        f = os.path.join(PROJ_DIR, d, "project.json")
+        if os.path.isfile(f):
+            try:
+                pj = json.load(open(f, encoding="utf-8"))
+                if os.path.isfile(pj.get("video", "")):
+                    projects.append({"id": pj["id"], "name": pj["name"], "size": os.path.getsize(pj["video"]), "mtime": os.path.getmtime(f)})
+            except Exception:  # noqa
+                pass
+    projects.sort(key=lambda x: -x["mtime"])
+    inputs = [{"name": fn, "size": os.path.getsize(os.path.join(TOOLS_IN, fn)), "mtime": os.path.getmtime(os.path.join(TOOLS_IN, fn))}
+              for fn in os.listdir(TOOLS_IN) if os.path.isfile(os.path.join(TOOLS_IN, fn))]
+    inputs.sort(key=lambda x: -x["mtime"])
+    return jsonify({"media": media, "projects": projects, "inputs": inputs, "has_media": bool(MEDIA_DIR)})
+
+
+@app.post("/api/tools/source")
+def tools_source():
+    try:
+        sid, r = reg_source((request.get_json(silent=True) or {}).get("src"))
+    except ValueError as e:
+        return err(str(e), 404)
+    except Exception as e:  # noqa
+        return err(str(e))
+    return jsonify(src_view(sid, r))
+
+
+@app.get("/api/tools/frame/<sid>")
+def tools_frame(sid):
+    try:
+        r = src_by_sid(sid)
+        return Response(util.frame_jpeg(r["path"], float(request.args.get("t", 0)), int(request.args.get("w", 960))),
+                        mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+    except ValueError as e:
+        return err(str(e), 404)
+    except Exception as e:  # noqa
+        return err(str(e), 500)
+
+
+@app.post("/api/tools/upload")
+def tools_upload():
+    f = request.files.get("file")
+    if not f:
+        return err("Thiếu file.")
+    dest = unique_path(TOOLS_IN, safe_name(f.filename))
+    f.save(dest)
+    try:
+        util.probe(dest)
+    except Exception as e:  # noqa
+        os.remove(dest)
+        return err("File không phải video/âm thanh đọc được: " + str(e))
+    return jsonify({"input": os.path.basename(dest)})
+
+
+def tools_job(kind, fn):
+    if not start_task("_tools", kind, fn):
+        return err("Đang có một tác vụ công cụ khác chạy.", 409)
+    return jsonify({"ok": True})
+
+
+def finish_outputs(task, outs):
+    """Ghi kết quả vào task; chép thêm sang EXPORT_DIR (vd. Drive) nếu có."""
+    names = [os.path.basename(o) for o in outs]
+    exported = []
+    if EXPORT_DIR:
+        try:
+            os.makedirs(EXPORT_DIR, exist_ok=True)
+            for i, o in enumerate(outs):
+                task.set(0.99, f"Đang chép vào thư mục lưu trữ ({i + 1}/{len(outs)})")
+                dst = unique_path(EXPORT_DIR, os.path.basename(o))
+                shutil.copyfile(o, dst)
+                exported.append(dst)
+        except Exception:  # noqa
+            traceback.print_exc()
+    task.result = {"files": names, "export": exported}
+
+
+def out_base(name, default):
+    return os.path.join(TOOLS_OUT, os.path.splitext(safe_name(name, default))[0] if name else default)
+
+
+def free_base(base, exts=(".mp4", ".mkv", ".mp3")):
+    b, i = base, 2
+    while any(os.path.exists(b + e) or os.path.exists(f"{b}_1{e}") for e in exts):
+        b = f"{base}_{i}"
+        i += 1
+    return b
+
+
+@app.post("/api/tools/merge")
+def tools_merge():
+    body = request.get_json(force=True)
+    try:
+        paths = [src_by_sid(x)["path"] for x in body.get("sids", [])]
+    except ValueError as e:
+        return err(str(e), 404)
+    if len(paths) < 2:
+        return err("Cần chọn ít nhất 2 video để ghép.")
+    base = free_base(out_base(body.get("name"), "ghep"))
+    mode = body.get("mode") if body.get("mode") in ("auto", "copy", "reencode") else "auto"
+    height = int(body.get("height") or 0)
+
+    def work(task):
+        out = tools.merge(paths, base, mode, height, task=task, cb=lambda p: task.set(p * 0.98, "Đang ghép video"))
+        finish_outputs(task, [out])
+
+    return tools_job("merge", work)
+
+
+@app.post("/api/tools/cut")
+def tools_cut():
+    body = request.get_json(force=True)
+    try:
+        r = src_by_sid(body.get("sid"))
+    except ValueError as e:
+        return err(str(e), 404)
+    try:
+        segs = [(float(a), float(b)) for a, b in body.get("segments", [])]
+    except (TypeError, ValueError):
+        return err("Thời gian cắt không hợp lệ.")
+    if not segs:
+        return err("Chưa có đoạn nào để cắt.")
+    base = free_base(out_base(body.get("name"), os.path.splitext(r["name"])[0] + "_cat"))
+    exact, join = bool(body.get("exact")), bool(body.get("join"))
+
+    def work(task):
+        outs = tools.cut(r["path"], segs, base, exact=exact, join=join, task=task, cb=lambda p: task.set(p * 0.98, "Đang cắt video"))
+        finish_outputs(task, outs)
+
+    return tools_job("cut", work)
+
+
+@app.post("/api/tools/audio")
+def tools_audio():
+    body = request.get_json(force=True)
+    try:
+        r = src_by_sid(body.get("sid"))
+    except ValueError as e:
+        return err(str(e), 404)
+    if not r["info"]["has_audio"]:
+        return err("Video này không có âm thanh để tách.")
+    br = int(body.get("bitrate") or 192)
+    br = br if br in (96, 128, 160, 192, 256, 320) else 192
+    a = body.get("start")
+    b = body.get("end")
+    base = free_base(out_base(body.get("name"), os.path.splitext(r["name"])[0]))
+
+    def work(task):
+        out = tools.extract_mp3(r["path"], base + ".mp3", br, float(a) if a not in (None, "") else None,
+                                float(b) if b not in (None, "") else None, task=task, cb=lambda p: task.set(p * 0.98, "Đang tách MP3"))
+        finish_outputs(task, [out])
+
+    return tools_job("audio", work)
+
+
+@app.get("/api/tools/task")
+def tools_task():
+    t = TASKS.get("_tools")
+    return jsonify(t.dump() if t else {"kind": None, "state": "idle", "progress": 0, "message": ""})
+
+
+@app.post("/api/tools/task/cancel")
+def tools_task_cancel():
+    t = TASKS.get("_tools")
+    if t and t.state == "running":
+        t.cancel = True
+    return jsonify({"ok": True})
+
+
+@app.get("/api/tools/outputs")
+def tools_outputs():
+    out = []
+    for fn in os.listdir(TOOLS_OUT):
+        f = os.path.join(TOOLS_OUT, fn)
+        if os.path.isfile(f):
+            out.append({"name": fn, "size": os.path.getsize(f), "mtime": os.path.getmtime(f), "audio": fn.lower().endswith((".mp3", ".m4a", ".wav"))})
+    out.sort(key=lambda x: -x["mtime"])
+    return jsonify(out)
+
+
+def _tool_file(name):
+    f = os.path.join(TOOLS_OUT, os.path.basename(name))
+    if not os.path.isfile(f):
+        abort(404)
+    return f
+
+
+@app.get("/api/tools/file/<path:name>")
+def tools_file(name):
+    f = _tool_file(name)
+    return send_file(f, conditional=True, as_attachment=bool(request.args.get("download")), download_name=os.path.basename(f))
+
+
+@app.delete("/api/tools/file/<path:name>")
+def tools_file_delete(name):
+    os.remove(_tool_file(name))
+    return jsonify({"ok": True})
 
 
 def main():

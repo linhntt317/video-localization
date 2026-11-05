@@ -257,3 +257,24 @@ dialog::backdrop{background:rgba(2,8,5,.7);backdrop-filter:blur(6px);animation:f
 .asrbox .chk{margin:4px 0}
 
 .vmsg{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;gap:8px;padding:12px;text-align:center;font-size:13px;color:#fca5a5;background:rgba(0,0,0,.72);z-index:2}
+
+.seg{display:flex;gap:4px;padding:4px;margin-bottom:18px;background:var(--panel);border:1px solid var(--line);border-radius:999px;width:max-content;max-width:100%;overflow:auto}
+.seg button{border:0;background:none;color:var(--mute);padding:8px 18px;border-radius:999px;cursor:pointer;white-space:nowrap;transition:all .25s}
+.seg button.on{background:linear-gradient(135deg,var(--accent),#86efac);color:#06210f;font-weight:700}
+.tlist{display:grid;gap:8px;margin:8px 0}
+.titem{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-size:14px}
+.titem .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.titem small{color:var(--mute);display:block;font-size:12px}
+.titem .bt{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+.titem .n{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:var(--panel2);color:var(--mute);font-weight:700;font-size:12px}
+.tseg{grid-template-columns:auto 1fr 1fr auto}
+.tseg input{padding:6px 8px;font-size:13px;font-variant-numeric:tabular-nums}
+.titem.sel{border-color:var(--accent)}
+.titem audio,.titem video{grid-column:1/-1;width:100%;margin-top:4px;border-radius:8px}
+.pickbody{max-height:50vh;overflow:auto;display:grid;gap:6px}
+.pickbody h3{margin:8px 0 2px}
+.prow{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);cursor:pointer;font-size:14px}
+.prow input{width:auto;margin:0}.prow.sel{border-color:var(--accent);background:#4ade8014}
+.prow span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.prow small{color:var(--mute)}
+.pickadd{display:grid;gap:10px;margin-top:8px}
+#ctOut{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--mute)}

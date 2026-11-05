@@ -4,3 +4,4 @@ projects/*
 !projects/.gitkeep
 tessdata/
 site/
+tools/

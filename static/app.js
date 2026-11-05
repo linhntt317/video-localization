@@ -132,24 +132,28 @@ function onEnter(n) {
   if (n === 3) enter3();
   if (n === 4) enter4();
 }
-$('#stepper').addEventListener('click', e => { const b = e.target.closest('button'); if (b && !b.disabled) setStep(+b.dataset.step); });
+$('#stepper').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b || b.disabled) return;
+  if (TL.on) { TL.on = false; $('#tools').hidden = true; $('#toolsBtn').textContent = 'Công cụ'; setStep(+b.dataset.step, true); } else setStep(+b.dataset.step);
+});
 window.addEventListener('resize', updateStepper);
 
 /* ---------------------------------------------------------------- tác vụ nền */
-function runTask(root, onDone, btn) {
+function runTask(root, onDone, btn, base) {
+  base = base || `/api/p/${S.p.id}`;
   const bar = $('.bar i', root), pm = $('.pm', root), pp = $('.pp', root);
   root.hidden = false;
   btn?.classList.add('busy'); btn && (btn.disabled = true);
-  $('[data-cancel]', root).onclick = () => api(`/api/p/${S.p.id}/task/cancel`, { method: 'POST' });
-  clearInterval(S.poll);
+  $('[data-cancel]', root).onclick = () => api(`${base}/task/cancel`, { method: 'POST' });
+  clearInterval(root._poll);
   const tick = async () => {
     let t;
-    try { t = await api(`/api/p/${S.p.id}/task`); } catch (e) { return; }
+    try { t = await api(`${base}/task`); } catch (e) { return; }
     bar.style.width = (t.progress * 100).toFixed(1) + '%';
     pm.textContent = t.message || '...';
     pp.textContent = Math.round(t.progress * 100) + '%';
     if (t.state !== 'running') {
-      clearInterval(S.poll);
+      clearInterval(root._poll);
       btn?.classList.remove('busy'); btn && (btn.disabled = false);
       setTimeout(() => { root.hidden = true; }, t.state === 'done' ? 900 : 0);
       if (t.state === 'error') toast(t.error || 'Có lỗi xảy ra', true);
@@ -157,7 +161,7 @@ function runTask(root, onDone, btn) {
       else onDone && onDone(t);
     }
   };
-  S.poll = setInterval(tick, 700); tick();
+  root._poll = setInterval(tick, 700); tick();
 }
 
 /* ---------------------------------------------------------------- khởi động */
@@ -870,5 +874,184 @@ $('#connGo').onclick = () => {
   lsSet('vl_token', $('#connToken').value.trim());
   location.reload();
 };
+
+
+/* ---------------------------------------------------------------- công cụ riêng: ghép video, cắt video, tách MP3 */
+const TL = { on: false, merge: [], cut: null, segs: [], t: 0, mp: null };
+const vinfo = v => `${v.name} · ${dur(v.duration)} · ${v.width}x${v.height} · ${mb(v.size)}${v.has_audio ? '' : ' · không có tiếng'}`;
+function showTools(on) {
+  TL.on = on;
+  if (on) {
+    $$('.step').forEach(x => x.hidden = true); $('#tools').hidden = false;
+    $('#toolsBtn').textContent = '← Về dự án'; $$('#stepper button').forEach(b => b.classList.remove('on'));
+    loadToolOut();
+    api('/api/tools/task').then(t => { if (t.state === 'running') runTask($('#toolProg'), onToolDone, null, '/api/tools'); }).catch(() => { });
+  } else { $('#tools').hidden = true; $('#toolsBtn').textContent = 'Công cụ'; setStep(S.step, true); }
+}
+$('#toolsBtn').onclick = () => showTools(!TL.on);
+$('#toolTabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-tool]'); if (!b) return;
+  $$('#toolTabs button').forEach(x => x.classList.toggle('on', x === b));
+  ['merge', 'cut', 'mp3'].forEach(k => $('#tool_' + k).hidden = k !== b.dataset.tool);
+});
+async function loadToolOut() {
+  const list = await api('/api/tools/outputs').catch(() => []);
+  $('#toolOut').innerHTML = list.length ? list.map((o, i) => `<div class="titem" data-n="${esc(o.name)}" data-a="${o.audio ? 1 : 0}">
+    <span class="n">${i + 1}</span><div class="nm"><b>${esc(o.name)}</b><small>${mb(o.size)}</small></div>
+    <div class="bt"><a class="btn mini primary" href="${U('/api/tools/file/' + encodeURIComponent(o.name) + '?download=1')}">Tải về</a><button class="btn mini" type="button" data-play>${o.audio ? 'Nghe' : 'Xem'}</button><button class="btn mini danger" type="button" data-del>×</button></div></div>`).join('')
+    : '<div class="empty">Chưa có kết quả nào.</div>';
+}
+$('#toolOut').addEventListener('click', async e => {
+  const it = e.target.closest('.titem'); if (!it) return;
+  const n = it.dataset.n;
+  if (e.target.closest('[data-del]')) {
+    if (!confirm('Xoá file này khỏi máy xử lý?')) return;
+    await api('/api/tools/file/' + encodeURIComponent(n), { method: 'DELETE' }).catch(err => toast(err.message, true)); loadToolOut();
+  } else if (e.target.closest('[data-play]')) {
+    const ex = $('audio,video', it); if (ex) { ex.pause(); ex.remove(); return; }
+    const m = document.createElement(it.dataset.a === '1' ? 'audio' : 'video'); m.controls = true; m.preload = 'metadata'; m.src = U('/api/tools/file/' + encodeURIComponent(n)); it.appendChild(m); m.play().catch(() => { });
+  }
+});
+function onToolDone(t) {
+  const r = t.result || {};
+  toast(`Xong! Đã tạo ${r.files?.length || 0} file. Bấm "Tải về" ở phần Kết quả.`);
+  const h = $('#toolExport'); h.hidden = !r.export?.length; if (r.export?.length) h.textContent = 'Đã chép thêm vào thư mục lưu trữ: ' + r.export.join(', ');
+  loadToolOut();
+}
+async function startTool(path, body, btn) {
+  try { await api('/api/tools/' + path, { json: body }); } catch (e) { return toast(e.message, true); }
+  runTask($('#toolProg'), onToolDone, btn, '/api/tools');
+}
+
+/* ---- hộp chọn video (thư mục Drive, dự án, đã tải, tải lên, link, đường dẫn) ---- */
+let PK = null;
+function pickSources(multi, title) {
+  return new Promise(async resolve => {
+    PK = { multi, sel: [], paths: [], resolve };
+    $('#pickTitle').textContent = title || (multi ? 'Chọn các video' : 'Chọn một video');
+    $('#pkMsg').textContent = '';
+    await renderPick(); $('#dlgPick').showModal();
+  });
+}
+async function renderPick() {
+  const r = await api('/api/tools/sources').catch(() => ({ media: [], projects: [], inputs: [] }));
+  const row = (k, v, name, size) => { const on = PK.sel.some(x => x.k === k && x.v === v); return `<label class="prow ${on ? 'sel' : ''}" data-k="${k}" data-v="${esc(v)}"><input type="${PK.multi ? 'checkbox' : 'radio'}" ${on ? 'checked' : ''} tabindex="-1"><span>${esc(name)}</span><small>${size != null ? mb(size) : ''}</small></label>`; };
+  const sec = (t, html) => html ? `<h3>${t}</h3>${html}` : '';
+  $('#pickBody').innerHTML =
+    sec('Video trong thư mục Drive / máy xử lý', r.media.map(m => row('media', m.name, m.name, m.size)).join('')) +
+    sec('Video của các dự án', r.projects.map(m => row('project', m.id, m.name, m.size)).join('')) +
+    sec('Đã tải lên / tải về', r.inputs.map(m => row('input', m.name, m.name, m.size)).join('')) +
+    sec('Đường dẫn đã nhập', PK.paths.map(v => row('path', v, v, null)).join('')) ||
+    '<div class="empty">Chưa có video nào. Mở mục "Thêm video mới" bên dưới để tải lên, dán link hoặc nhập đường dẫn.</div>';
+}
+$('#pickBody').addEventListener('click', e => {
+  const r = e.target.closest('.prow'); if (!r) return; e.preventDefault();
+  const k = r.dataset.k, v = r.dataset.v, i = PK.sel.findIndex(x => x.k === k && x.v === v);
+  if (i >= 0) PK.sel.splice(i, 1); else { if (!PK.multi) PK.sel = []; PK.sel.push({ k, v }); }
+  renderPick();
+});
+$('#dlgPick').addEventListener('close', () => {
+  const ok = $('#dlgPick').returnValue === 'go', sel = PK.sel;
+  PK.resolve(ok ? sel.map(x => ({ [x.k]: x.v })) : []);
+});
+function pkAdd(k, v) { if (!PK.multi) PK.sel = []; if (!PK.sel.some(x => x.k === k && x.v === v)) PK.sel.push({ k, v }); renderPick(); }
+$('#pkFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append('file', f); $('#pkMsg').textContent = `Đang tải lên ${f.name} ...`;
+  try { const r = await api('/api/tools/upload', { method: 'POST', body: fd }); $('#pkMsg').textContent = 'Đã tải lên.'; pkAdd('input', r.input); }
+  catch (err) { $('#pkMsg').textContent = err.message; }
+  e.target.value = '';
+};
+$('#pkPathBtn').onclick = () => { const v = $('#pkPath').value.trim(); if (!v) return; if (!PK.paths.includes(v)) PK.paths.push(v); $('#pkPath').value = ''; pkAdd('path', v); };
+$('#pkUrlBtn').onclick = async () => {
+  const url = $('#pkUrl').value.trim(); if (!url) return;
+  try { await api('/api/import_url', { json: { url, to: 'tools' } }); } catch (err) { $('#pkMsg').textContent = err.message; return; }
+  const b = $('#pkUrlBtn'); b.disabled = true;
+  const iv = setInterval(async () => {
+    let t; try { t = await api('/api/import_url'); } catch (err) { return; }
+    $('#pkMsg').textContent = (t.message || '') + (t.total ? ` ${mb(t.done)} / ${mb(t.total)}` : t.done ? ' ' + mb(t.done) : '');
+    if (t.state === 'running') return;
+    clearInterval(iv); b.disabled = false;
+    if (t.state === 'error') $('#pkMsg').textContent = t.error; else if (t.input) { $('#pkMsg').textContent = 'Đã tải về.'; $('#pkUrl').value = ''; pkAdd('input', t.input); }
+  }, 1000);
+};
+['pkUrl', 'pkPath'].forEach(id => $('#' + id).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $(id === 'pkUrl' ? '#pkUrlBtn' : '#pkPathBtn').click(); } }));
+async function regSources(srcs) {
+  const out = [];
+  for (const src of srcs) { try { out.push(await api('/api/tools/source', { json: { src } })); } catch (e) { toast(e.message, true); } }
+  return out;
+}
+
+/* ---- ghép video ---- */
+function renderMerge() {
+  const L = TL.merge, box = $('#mgList');
+  box.innerHTML = L.length ? L.map((v, i) => `<div class="titem" data-i="${i}"><span class="n">${i + 1}</span><div class="nm"><b>${esc(v.name)}</b><small>${dur(v.duration)} · ${v.width}x${v.height} · ${mb(v.size)}${v.has_audio ? '' : ' · không có tiếng'}</small></div>
+    <div class="bt"><button class="btn mini" type="button" data-up ${i ? '' : 'disabled'}>↑</button><button class="btn mini" type="button" data-dn ${i < L.length - 1 ? '' : 'disabled'}>↓</button><button class="btn mini danger" type="button" data-rm>×</button></div></div>`).join('')
+    : '<div class="empty">Chưa chọn video nào. Bấm "+ Thêm video".</div>';
+  const same = L.length > 1 && L.every(v => v.codec === L[0].codec && v.width === L[0].width && v.height === L[0].height && v.has_audio === L[0].has_audio);
+  $('#mgTotal').textContent = L.length ? `${L.length} video · tổng ${dur(L.reduce((a, v) => a + v.duration, 0))}.` + (L.length > 1 ? (same ? ' Cùng định dạng: ghép nhanh, không mất chất lượng.' : ' Khác định dạng: sẽ tự mã hoá lại về cùng khung hình (chậm hơn).') : '') : '';
+}
+$('#mgAdd').onclick = async () => { const s = await pickSources(true, 'Chọn các video cần ghép (theo thứ tự chọn)'); TL.merge.push(...await regSources(s)); renderMerge(); };
+$('#mgList').addEventListener('click', e => {
+  const it = e.target.closest('.titem'); if (!it) return; const i = +it.dataset.i, L = TL.merge;
+  if (e.target.closest('[data-rm]')) L.splice(i, 1);
+  else if (e.target.closest('[data-up]') && i > 0) [L[i - 1], L[i]] = [L[i], L[i - 1]];
+  else if (e.target.closest('[data-dn]') && i < L.length - 1) [L[i + 1], L[i]] = [L[i], L[i + 1]];
+  renderMerge();
+});
+$('#mgRun').onclick = () => {
+  if (TL.merge.length < 2) return toast('Hãy chọn ít nhất 2 video để ghép.', true);
+  startTool('merge', { sids: TL.merge.map(v => v.sid), name: $('#mgName').value.trim(), mode: $('#mgMode').value, height: +$('#mgRes').value }, $('#mgRun'));
+};
+renderMerge();
+
+/* ---- cắt video ---- */
+const showFrameC = debounce(() => TL.cut && loadImg($('#frameC'), $('#skelC'), U(`/api/tools/frame/${TL.cut.sid}?t=${TL.t.toFixed(2)}&w=960&_=${Date.now() % 100000}`)), 150);
+function setC(t) { if (!TL.cut) return; TL.t = Math.max(0, Math.min(TL.cut.duration, t)); $('#ctSlider').value = TL.t; $('#ctOut').textContent = fmt(TL.t); showFrameC(); }
+function renderSegs() {
+  $('#ctSegs').innerHTML = TL.segs.map((g, i) => `<div class="titem tseg" data-i="${i}"><span class="n">${i + 1}</span>
+    <label>Từ<input type="text" data-k="a" value="${fmt(g.a)}"></label><label>Đến<input type="text" data-k="b" value="${fmt(g.b)}"></label>
+    <div class="bt"><button class="btn mini" type="button" data-sa>Đầu = thanh</button><button class="btn mini" type="button" data-sb>Cuối = thanh</button><button class="btn mini danger" type="button" data-rm>×</button></div></div>`).join('');
+}
+$('#ctPick').onclick = async () => {
+  const [src] = await pickSources(false, 'Chọn video cần cắt'); if (!src) return;
+  const [v] = await regSources([src]); if (!v) return;
+  TL.cut = v; TL.segs = [{ a: 0, b: Math.min(v.duration, 10) }];
+  $('#ctInfo').textContent = vinfo(v); $('#ctBody').hidden = false; $('#ctSlider').max = v.duration.toFixed(1);
+  $('#ctName').placeholder = v.name.replace(/\.[^.]+$/, '') + '_cat'; renderSegs(); setC(0);
+};
+$('#ctSlider').addEventListener('input', e => setC(+e.target.value));
+$$('[data-cseek]').forEach(b => b.onclick = () => setC(TL.t + +b.dataset.cseek));
+$('#ctAdd').onclick = () => { if (!TL.cut) return; TL.segs.push({ a: +TL.t.toFixed(2), b: +Math.min(TL.cut.duration, TL.t + 5).toFixed(2) }); renderSegs(); };
+$('#ctSegs').addEventListener('click', e => {
+  const it = e.target.closest('.titem'); if (!it) return; const g = TL.segs[+it.dataset.i];
+  if (e.target.closest('[data-rm]')) TL.segs.splice(+it.dataset.i, 1);
+  else if (e.target.closest('[data-sa]')) g.a = +TL.t.toFixed(2);
+  else if (e.target.closest('[data-sb]')) g.b = +TL.t.toFixed(2);
+  else return;
+  renderSegs();
+});
+$('#ctSegs').addEventListener('change', e => { const it = e.target.closest('.titem'), k = e.target.dataset.k; if (!it || !k) return; const g = TL.segs[+it.dataset.i]; g[k] = parseT(e.target.value); e.target.value = fmt(g[k]); if (TL.cut) setC(g[k]); });
+$('#ctRun').onclick = () => {
+  if (!TL.cut) return toast('Hãy chọn video trước.', true);
+  if (!TL.segs.length) return toast('Chưa có đoạn nào để cắt.', true);
+  const bad = TL.segs.findIndex(g => !(g.b > g.a)); if (bad >= 0) return toast(`Đoạn ${bad + 1}: điểm cuối phải sau điểm đầu.`, true);
+  startTool('cut', { sid: TL.cut.sid, segments: TL.segs.map(g => [g.a, g.b]), exact: $('#ctExact').checked, join: $('#ctJoin').checked, name: $('#ctName').value.trim() }, $('#ctRun'));
+};
+
+/* ---- tách MP3 ---- */
+$('#mpPick').onclick = async () => {
+  const [src] = await pickSources(false, 'Chọn video cần tách MP3'); if (!src) return;
+  const [v] = await regSources([src]); if (!v) return;
+  TL.mp = v; $('#mpInfo').textContent = vinfo(v); $('#mpBody').hidden = !v.has_audio;
+  if (!v.has_audio) toast('Video này không có âm thanh để tách.', true);
+  $('#mpName').placeholder = v.name.replace(/\.[^.]+$/, '');
+};
+$('#mpRun').onclick = () => {
+  if (!TL.mp) return toast('Hãy chọn video trước.', true);
+  const a = $('#mpA').value.trim(), b = $('#mpB').value.trim();
+  startTool('audio', { sid: TL.mp.sid, bitrate: +$('#mpBr').value, start: a ? parseT(a) : null, end: b ? parseT(b) : null, name: $('#mpName').value.trim() }, $('#mpRun'));
+};
+
 
 init();
