@@ -49,5 +49,8 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 
 - `video_error(p)` (app.py): nếu file video của dự án mất (Colab khởi động lại, dự án khôi phục từ BACKUP_DIR mà video chưa chép về) thì frame/ocr/rescan/asr/probe/preview/render trả 503 kèm lý do; nếu video còn ở `MEDIA_SRC` thì tự `start_sync()`. `GET /api/p/<pid>` kèm `_video_error`. `loadImg` hiện lớp thông báo + tự thử lại mỗi 5s khi đang chép.
 
+- Tốc độ OCR (đo 4/11): mỗi lần gọi Tesseract riêng ~0,12s (chủ yếu khởi động); `_ocr_batch` gộp ~16 ảnh vào một lần chạy (danh sách ảnh, đọc `page_num` trong TSV) + `--oem 1` → nhanh ~5-8 lần. `run_ocr` chạy song song: mặt nạ theo cửa sổ 24 khung (ThreadPool), Tesseract theo lô trong ThreadPool trong lúc vẫn đọc tiếp khung hình. Video thử 64s: sạch 13s→3s, mờ dần 28s→5s, độ chính xác không đổi. Tesseract đã dùng hết CPU nên thêm luồng không nhanh hơn nữa.
+- Xác thực Whisper bằng OCR kỹ: `ocr.deep_scan` (4 mức nhạy × fps 12-15, thử từng dòng làm dòng chính, `plausible()` lọc chuỗi rác, dừng sớm khi conf≥70) qua `deep_ranges` (chỉ giữ câu thuộc lõi đoạn). Pipeline `/ocr` với `ocr.asr.on` và `/rescan {deep:true}` chỉ thêm câu khi OCR thấy chữ thật; KHÔNG còn tự thêm chữ Whisper (nút "+ Thêm" thủ công vẫn có). `merge_cues` gỡ trùng cả giữa các câu mới. Đoạn OCR vẫn không thấy chữ giữ ở hàng đỏ.
+
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.

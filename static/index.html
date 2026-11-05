@@ -113,7 +113,6 @@
               <label>Mô hình Whisper<select id="o_asr_model"></select></label>
               <label>Ngôn ngữ nói<select id="o_asr_lang"><option value="">Tự nhận</option><option value="zh">Trung</option><option value="en">Anh</option><option value="ja">Nhật</option><option value="ko">Hàn</option><option value="vi">Việt</option></select></label>
             </div>
-            <label class="chk"><input type="checkbox" id="o_asr_add"> Tự thêm các đoạn vẫn thiếu bằng chữ Whisper (có nhãn "từ Whisper")</label>
             <p class="hint" id="o_asr_hint"></p>
           </div>
         </div>
@@ -188,7 +187,7 @@
           </div>
           <p class="hint" id="asrSummary"></p>
           <div class="row wrap" id="asrBulk" hidden>
-            <button class="btn" id="asrRescan" type="button">Quét lại OCR các đoạn nghi sót</button>
+            <button class="btn" id="asrRescan" type="button">Quét kỹ lại OCR các đoạn nghi sót</button>
             <button class="btn" id="asrAddAll" type="button">Thêm tất cả bằng chữ Whisper</button>
           </div>
           <div class="asrlist" id="asrList"></div>

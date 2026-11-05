@@ -5,6 +5,8 @@ import difflib
 import os
 import re
 import subprocess
+import tempfile
+import threading
 
 import cv2
 import numpy as np
@@ -104,6 +106,51 @@ def _ocr_best(pngs, lang, tess, enough=86.0):
         if best[1] >= enough and len(best[0]) >= 3:
             break
     return best
+
+
+_OEM = ["--oem", "1"]  # chỉ dùng LSTM: nhanh hơn ~1,5 lần; tự bỏ nếu bản Tesseract không hỗ trợ
+
+
+def _ocr_batch(pngs, lang, tess):
+    """Đọc nhiều ảnh trong MỘT lần chạy Tesseract (nhanh hơn nhiều so với gọi từng ảnh vì khỏi khởi động lại). Trả về [(chữ, độ tin cậy)]."""
+    global _OEM
+    out = [("", 0.0)] * len(pngs)
+    if not pngs:
+        return out
+    env = dict(os.environ, OMP_THREAD_LIMIT="1")
+    with tempfile.TemporaryDirectory() as d:
+        paths = []
+        for i, png in enumerate(pngs):
+            fp = os.path.join(d, f"{i:05d}.png")
+            with open(fp, "wb") as f:
+                f.write(png)
+            paths.append(fp)
+        lst = os.path.join(d, "list.txt")
+        with open(lst, "w", encoding="utf-8") as f:
+            f.write("\n".join(paths))
+        r = subprocess.run([tess, lst, "stdout", "-l", lang, "--psm", "7"] + _OEM + ["tsv"], capture_output=True, env=env,
+                           creationflags=util.NOWINDOW)
+        if r.returncode != 0 and _OEM:
+            _OEM = []  # bản Tesseract/dữ liệu ngôn ngữ không hỗ trợ --oem 1: chạy lại như thường
+            r = subprocess.run([tess, lst, "stdout", "-l", lang, "--psm", "7", "tsv"], capture_output=True, env=env,
+                               creationflags=util.NOWINDOW)
+    pages = {}
+    for ln in r.stdout.decode("utf-8", "ignore").splitlines()[1:]:
+        p = ln.split("\t")
+        if len(p) >= 12 and p[0] == "5":
+            try:
+                pg, c = int(p[1]), float(p[10])
+            except ValueError:
+                continue
+            w = p[11].strip()
+            if c >= 0 and w:
+                pages.setdefault(pg, ([], []))[0].append(w)
+                pages[pg][1].append(c)
+    for pg, (words, confs) in pages.items():
+        if 1 <= pg <= len(pngs):
+            text = ("".join(words) if lang.split("+")[0] in CJK_NOSPACE else " ".join(words)).strip()
+            out[pg - 1] = (text, float(np.mean(confs)))
+    return out
 
 
 def _ocr_png(png, lang, tess):
@@ -212,63 +259,125 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
     fsize = W * crop_h * 3
     total = max(1, int((t1 - t0) * fps))
 
-    jobs = []          # (band_index, png)
-    frames = []        # per frame: [job index or None per band]
-    last_key = [None] * len(bands)
-    last_job = [None] * len(bands)
-    idx = 0
-    while True:
-        if task is not None and task.cancel:
-            p.kill()
-            raise Cancelled()
-        buf = p.stdout.read(fsize)
-        if len(buf) < fsize:
-            break
-        img = np.frombuffer(buf, np.uint8).reshape(crop_h, W, 3)
-        row = []
+    nb = len(bands)
+    ncpu = max(1, min(8, os.cpu_count() or 2))
+    jobs = []          # (band_index, [png các phiên bản])
+    frames = []        # mỗi khung: [chỉ số job hoặc None cho từng dòng]
+    last_key = [None] * nb
+    last_job = [None] * nb
+    res = {}           # job -> (chữ, tin cậy)
+    lock = threading.Lock()
+    prog = {"done": 0}
+    BATCH = 16
+
+    def analyse(img):
+        """Tính mặt nạ chữ cho mọi dòng của một khung (chạy song song nhiều khung)."""
+        out = []
         for bi, (a, z) in enumerate(px):
             if not ref and bi != primary:  # bỏ dòng đối chiếu cho nhanh
-                row.append(None)
+                out.append(None)
                 continue
             sub = img[a - ymin: z - ymin]
             mask, soft = _text_mask(sub, thr)
             if mask.sum() < sub.shape[0] * sub.shape[1] * 0.002:
-                row.append(None)
-                last_key[bi] = None
+                out.append(False)
                 continue
             key = cv2.resize(mask, (max(1, W // 3), max(1, sub.shape[0] // 3)), interpolation=cv2.INTER_AREA).astype(np.float32)
-            if (last_key[bi] is not None and last_key[bi].shape == key.shape
-                    and float(np.abs(key - last_key[bi]).sum()) / max(1.0, float(max(key.sum(), last_key[bi].sum()))) < 0.35):
-                row.append(last_job[bi])
-            else:
-                pngs = []
-                white = (sub.min(2) >= thr).astype(np.uint8)  # chữ trắng tuyệt đối: sạch nét nhất khi nền không sáng
-                if 0.002 < white.mean() < 0.25:
-                    pngs.append(_prep_png(white))
-                pngs += [_prep_png(mask), _prep_png(mask, soft)]
-                jobs.append((bi, pngs))
-                last_job[bi] = len(jobs) - 1
-                row.append(last_job[bi])
-            last_key[bi] = key
-        frames.append(row)
-        idx += 1
-        if cb and idx % 5 == 0:
-            cb(0.45 * min(1.0, idx / total), f"Đọc khung hình {idx}/{total}")
-    p.wait()
+            out.append((mask, soft, key, sub))
+        return out
 
-    results = [None] * len(jobs)
-    done = 0
-    workers = max(1, min(8, (os.cpu_count() or 2)))
-    with cf.ThreadPoolExecutor(workers) as ex:
-        futs = {ex.submit(_ocr_best, pngs, bands[bi]["lang"], tess): j for j, (bi, pngs) in enumerate(jobs)}
-        for f in cf.as_completed(futs):
+    def run_jobs(idx):
+        """Đọc một lô job: vòng 1 cho tất cả, chỉ job chưa đủ chắc mới thử phiên bản ảnh kế tiếp (gom lô theo ngôn ngữ)."""
+        best = {j: ("", 0.0) for j in idx}
+        pending = list(idx)
+        for rnd in range(3):
             if task is not None and task.cancel:
-                ex.shutdown(cancel_futures=True)
+                return
+            pending = [j for j in pending if rnd < len(jobs[j][1]) and not (best[j][1] >= 86.0 and len(best[j][0]) >= 3)]
+            if not pending:
+                break
+            by_lang = {}
+            for j in pending:
+                by_lang.setdefault(bands[jobs[j][0]]["lang"], []).append(j)
+            for lang, js in by_lang.items():
+                for j, r in zip(js, _ocr_batch([jobs[j][1][rnd] for j in js], lang, tess)):
+                    if r[0] and r[1] > best[j][1]:
+                        best[j] = r
+        with lock:
+            res.update(best)
+            prog["done"] += len(idx)
+
+    mask_pool = cf.ThreadPoolExecutor(ncpu)
+    ocr_pool = cf.ThreadPoolExecutor(ncpu)
+    futs, window, backlog, idx = [], [], [], 0
+
+    def flush():
+        nonlocal backlog
+        if window:
+            for img, an in zip(window, list(mask_pool.map(analyse, window))):
+                row = []
+                for bi in range(nb):
+                    a = an[bi]
+                    if a is None:
+                        row.append(None)
+                    elif a is False:
+                        row.append(None)
+                        last_key[bi] = None
+                    else:
+                        mask, soft, key, sub = a
+                        if (last_key[bi] is not None and last_key[bi].shape == key.shape
+                                and float(np.abs(key - last_key[bi]).sum()) / max(1.0, float(max(key.sum(), last_key[bi].sum()))) < 0.35):
+                            row.append(last_job[bi])
+                        else:
+                            pngs = []
+                            white = (sub.min(2) >= thr).astype(np.uint8)  # chữ trắng tuyệt đối: sạch nét nhất khi nền không sáng
+                            if 0.002 < white.mean() < 0.25:
+                                pngs.append(_prep_png(white))
+                            pngs += [_prep_png(mask), _prep_png(mask, soft)]
+                            jobs.append((bi, pngs))
+                            last_job[bi] = len(jobs) - 1
+                            backlog.append(last_job[bi])
+                            row.append(last_job[bi])
+                        last_key[bi] = key
+                frames.append(row)
+            window.clear()
+        while len(backlog) >= BATCH:  # đủ một lô thì cho chạy Tesseract ngay, trong lúc vẫn đọc tiếp khung hình
+            futs.append(ocr_pool.submit(run_jobs, backlog[:BATCH]))
+            backlog = backlog[BATCH:]
+
+    try:
+        while True:
+            if task is not None and task.cancel:
+                p.kill()
                 raise Cancelled()
-            results[futs[f]] = f.result()
-            done += 1
-            if cb and done % 3 == 0:
-                cb(0.45 + 0.55 * done / max(1, len(jobs)), f"Nhận dạng chữ {done}/{len(jobs)}")
+            buf = p.stdout.read(fsize)
+            if len(buf) < fsize:
+                break
+            window.append(np.frombuffer(buf, np.uint8).reshape(crop_h, W, 3))
+            idx += 1
+            if len(window) >= 24:
+                flush()
+                if cb:
+                    cb(0.9 * min(1.0, idx / total), f"Đọc khung hình {idx}/{total} · đã nhận dạng {prog['done']}/{len(jobs)} chữ")
+        flush()
+        p.wait()
+        if backlog:
+            futs.append(ocr_pool.submit(run_jobs, backlog))
+            backlog = []
+        for n, f in enumerate(cf.as_completed(futs), 1):
+            if task is not None and task.cancel:
+                raise Cancelled()
+            f.result()
+            if cb:
+                cb(0.9 + 0.1 * n / max(1, len(futs)), f"Nhận dạng chữ {prog['done']}/{len(jobs)}")
+    finally:
+        mask_pool.shutdown(wait=False, cancel_futures=True)
+        ocr_pool.shutdown(wait=False, cancel_futures=True)
+        if p.poll() is None:
+            p.kill()
+    if task is not None and task.cancel:
+        raise Cancelled()
+    results = [res.get(j, ("", 0.0)) for j in range(len(jobs))]
 
     def text_at(fi, bi):
         j = frames[fi][bi]
@@ -392,3 +501,68 @@ def probe_frame(video, info, bands, primary, t, thr=210, min_conf=40.0, seg_min=
                 item["reason"] = "ok"
         out.append(item)
     return out
+
+
+def plausible(text, lang):
+    """Chữ đọc ra có giống chữ thật không (loại các chuỗi rác như 'aaa ~ e 4.')."""
+    t = (text or "").strip()
+    core = re.sub(r"\s+", "", t)
+    if len(_norm(t)) < 2:
+        return False
+    first = lang.split("+")[0]
+    chars = re.sub(r"[^\w]", "", core)
+    if first in CJK_NOSPACE or first == "kor":
+        cjk = len(re.findall(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]", core))
+        return cjk >= max(1, int(0.6 * len(chars)))
+    letters = sum(ch.isalpha() for ch in core)
+    if letters < 2 or letters / max(1, len(core)) < 0.7:
+        return False
+    words = re.findall(r"[^\W\d_]+", t)
+    good = [w for w in words if (len(w) >= 2 and re.search(r"[aeiouyàáâãèéêìíòóôõùúýăđơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữự]", w.lower())) or w.lower() in ("i", "a")]
+    return len(good) >= max(1, int(0.6 * len(words)))
+
+
+def deep_scan(video, info, bands, primary, t0, t1, thr=210, task=None, cb=None):
+    """OCR thật kỹ một đoạn ngắn để xác thực: nhiều mức độ nhạy, tốc độ khung cao, thử lần lượt từng dòng làm dòng chính.
+    Chỉ giữ câu có chữ hợp lệ (plausible) và độ tin cậy đủ. Trả về danh sách câu (đã gỡ trùng)."""
+    dur = float(info["duration"])
+    t0, t1 = max(0.0, t0), min(dur, t1)
+    if t1 - t0 < 0.3:
+        return []
+    plans = [(thr, 12), (thr - 25, 12), (thr - 45, 15), (thr + 15, 12)]
+    order = [primary] + [i for i in range(len(bands)) if i != primary]
+    cands, total, step = [], len(plans) * len(order), 0
+    for bi in order:
+        lang = bands[bi]["lang"]
+        strong = False
+        for th, fps in plans:
+            if task is not None and task.cancel:
+                raise Cancelled()
+            cues = run_ocr(video, info, bands, bi, fps=fps, t0=t0, t1=t1, thr=int(max(120, min(254, th))),
+                           min_conf=25.0, seg_min=35.0, ref=False, task=task)
+            for c in cues:
+                if c.get("conf", 0) >= 45 and plausible(c["src"], lang):
+                    c["_band"] = bi
+                    cands.append(c)
+                    strong = strong or c["conf"] >= 70
+            step += 1
+            if cb:
+                cb(step / total)
+            if strong:
+                break  # đã thấy chữ chắc chắn ở dòng này, khỏi thử các mức còn lại
+        if strong:
+            break  # ưu tiên dòng chính (rồi mới tới dòng khác)
+    cands.sort(key=lambda c: (c["_band"] != primary, -c["conf"]))
+    chosen = []
+    for c in cands:
+        d = max(0.05, c["end"] - c["start"])
+        if not any(min(c["end"], o["end"]) - max(c["start"], o["start"]) > 0.4 * min(d, max(0.05, o["end"] - o["start"])) for o in chosen):
+            chosen.append(c)
+    chosen.sort(key=lambda c: c["start"])
+    for c in chosen:
+        bi = c.pop("_band")
+        c["deep"] = True
+        if bi != primary:
+            c["from_band"] = bands[bi]["name"]
+        c["ref"] = ""
+    return chosen

@@ -154,10 +154,12 @@ Tháng 11/2026, Hugging Face yêu cầu gói trả phí (PRO) cho Space loại D
 
 ### Đối chiếu bằng giọng nói (Whisper)
 
-Ở bước 3, khung "Tìm và bổ sung câu bị sót" có mục **Đối chiếu bằng giọng nói (Whisper)**: app nghe toàn bộ video, rồi đánh dấu những đoạn có người nói mà không có câu OCR nào tương ứng (hàng cam/đỏ dưới thanh thời gian). Với các đoạn đó bạn có thể: **Xem** khung hình, **+ Thêm** câu bằng chữ Whisper (có nhãn "từ Whisper"), **Quét lại OCR các đoạn nghi sót** (hạ ngưỡng, chỉ thêm câu mới), hoặc **Thêm tất cả**.
+Ở bước 3, khung "Tìm và bổ sung câu bị sót" có mục **Đối chiếu bằng giọng nói (Whisper)**: app nghe toàn bộ video, rồi đánh dấu những đoạn có người nói mà không có câu OCR nào tương ứng (hàng cam/đỏ dưới thanh thời gian). Với các đoạn đó bạn có thể: **Xem** khung hình, **+ Thêm** câu bằng chữ Whisper (có nhãn "từ Whisper"), **Quét kỹ lại OCR các đoạn nghi sót** (hạ ngưỡng, chỉ thêm câu mới), hoặc **Thêm tất cả**.
 
 - Cài trên máy tính: `pip install -r requirements-asr.txt` (Colab đã tự cài). Lần đầu chạy phải tải mô hình về.
 - GPU (Colab: Runtime ▸ Change runtime type ▸ T4) nhanh hơn nhiều; trên CPU hãy dùng tiny/base/small.
 - Chữ Whisper là lời nói được nhận dạng nên có thể khác phụ đề gốc hoặc sai chính tả; đoạn không có phụ đề mà có tiếng (lời dẫn, nhạc có lời) cũng bị đánh dấu, bạn bỏ qua là được.
 
 **Đối chiếu ngay khi quét OCR:** ở bước 2, tick **"Đối chiếu bằng giọng nói (Whisper) ngay sau khi quét OCR"**. Một lần bấm "Quét OCR" sẽ chạy: OCR → Whisper nghe video → tự quét lại OCR (ngưỡng thấp hơn) đúng những đoạn có tiếng nói mà chưa có câu → (tuỳ chọn) tự thêm các đoạn vẫn thiếu bằng chữ Whisper, có nhãn "từ Whisper". Nếu Whisper lỗi (chưa cài, không tải được mô hình) thì kết quả OCR vẫn được giữ và có thông báo.
+
+**Xác thực bằng OCR kỹ:** app không tự thêm chữ Whisper. Với mỗi đoạn Whisper nghe thấy tiếng mà chưa có câu, OCR quét lại thật kỹ đúng chỗ đó (nhiều mức nhạy, tốc độ khung cao, thử cả hai dòng) và chỉ thêm câu khi OCR thấy chữ thật (có nhãn "quét kỹ"). Đoạn nào OCR vẫn không thấy chữ (lời dẫn, nhạc có lời, hoặc phụ đề quá mờ) được giữ ở hàng đỏ để bạn xem và quyết định (Xem / Quét kỹ / + Thêm bằng chữ Whisper).

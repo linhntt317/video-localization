@@ -479,13 +479,15 @@ def asr_uncovered(cues, segs):
     return out
 
 
-def ocr_ranges(p, ranges, task, p0, p1, thr, min_conf, seg_min):
-    """Quét OCR nhiều đoạn, tiến độ trải từ p0 đến p1. Trả về danh sách câu tìm được."""
+def deep_ranges(p, ranges, task, p0, p1, pad=0.4):
+    """Quét OCR thật kỹ nhiều đoạn (xác thực chỗ Whisper nghe thấy tiếng). Tiến độ trải từ p0 đến p1."""
     o, found = p["ocr"], []
+    thr = int(o.get("thr", 210))
     for i, (a, b) in enumerate(ranges):
-        found += ocr.run_ocr(p["video"], p["info"], p["bands"], p.get("primary", 0), fps=max(6.0, float(o.get("fps", 6))),
-                             t0=a, t1=b, thr=thr, min_conf=min_conf, seg_min=seg_min, ref=bool(o.get("ref", True)), task=task,
-                             cb=(lambda pr, msg, i=i: task.set(p0 + (p1 - p0) * (i + pr) / len(ranges), f"Quét lại đoạn nghi sót {i + 1}/{len(ranges)}")))
+        got = ocr.deep_scan(p["video"], p["info"], p["bands"], p.get("primary", 0), a, b, thr=thr, task=task,
+                            cb=(lambda pr, i=i: task.set(p0 + (p1 - p0) * (i + pr) / len(ranges), f"Quét kỹ đoạn nghi sót {i + 1}/{len(ranges)}")))
+        ca, cb_ = a + pad, max(a + pad + 0.2, b - pad)  # lõi của đoạn (bỏ phần đệm hai đầu, dễ dính câu của đoạn bên cạnh)
+        found += [c for c in got if min(c["end"], cb_) - max(c["start"], ca) >= min(0.25, 0.5 * (cb_ - ca))]
     return found
 
 
@@ -531,21 +533,13 @@ def run_ocr(pid):
             q["asr"] = {"model": model, "lang": got, "segments": segs}
             miss = asr_uncovered(q["cues"], segs)
             task.result.update(segments=len(segs), missing=len(miss), rescanned=0)
-            if miss:
-                found = ocr_ranges(q, [(max(0.0, g["start"] - 0.3), min(float(p["info"]["duration"]), g["end"] + 0.3)) for g in miss[:300]],
-                                   task, 0.8, 0.97, max(120, int(o.get("thr", 210)) - 20), 30.0, 45.0)
+            if miss:  # xác thực: OCR lại thật kỹ chỗ Whisper nghe thấy tiếng, chỉ thêm câu khi OCR thấy chữ thật
+                dur = float(p["info"]["duration"])
+                found = deep_ranges(q, [(max(0.0, g["start"] - 0.4), min(dur, g["end"] + 0.4)) for g in miss[:300]], task, 0.8, 0.97)
                 q["cues"], added = merge_cues(q["cues"], found)
                 task.result["rescanned"] = added
                 miss = asr_uncovered(q["cues"], segs)
                 task.result["missing"] = len(miss)
-            if miss and wh.get("add"):
-                for g in miss:
-                    q["cues"].append({"id": 0, "start": g["start"], "end": g["end"], "src": g["text"], "ref": "", "vi": "", "asr": True})
-                q["cues"].sort(key=lambda c: c["start"])
-                for i, c in enumerate(q["cues"], 1):
-                    c["id"] = i
-                task.result["added_whisper"] = len(miss)
-                task.result["missing"] = 0
             task.result["cues"] = len(q["cues"])
             save(q)
         except Cancelled:
@@ -576,17 +570,12 @@ def probe_ocr(pid):
 
 
 def merge_cues(old, new):
-    """Thêm các câu mới không trùng thời gian với câu cũ (trùng > 40% độ dài câu ngắn hơn thì bỏ). Trả về (danh sách, số câu thêm)."""
+    """Thêm các câu mới không trùng thời gian với câu đang có (trùng > 40% độ dài câu ngắn hơn thì bỏ), kể cả trùng giữa
+    các câu mới với nhau (ưu tiên câu dài hơn, rồi tin cậy cao hơn). Trả về (danh sách, số câu thêm)."""
     out, added = list(old), 0
-    for n in new:
+    for n in sorted(new, key=lambda c: (-(c["end"] - c["start"]), -(c.get("conf") or 0))):
         dn = max(0.05, n["end"] - n["start"])
-        dup = False
-        for e in old:
-            ov = min(e["end"], n["end"]) - max(e["start"], n["start"])
-            if ov > 0.4 * min(dn, max(0.05, e["end"] - e["start"])):
-                dup = True
-                break
-        if not dup:
+        if not any(min(e["end"], n["end"]) - max(e["start"], n["start"]) > 0.4 * min(dn, max(0.05, e["end"] - e["start"])) for e in out):
             out.append(n)
             added += 1
     out.sort(key=lambda c: c["start"])
@@ -619,7 +608,9 @@ def run_rescan(pid):
 
     def work(task):
         found = []
-        for i, (a, b) in enumerate(rs):
+        if body.get("deep"):
+            found = deep_ranges(p, rs, task, 0.0, 1.0, pad=0.7)
+        for i, (a, b) in enumerate([] if body.get("deep") else rs):
             found += ocr.run_ocr(p["video"], p["info"], p["bands"], p.get("primary", 0), fps=max(6.0, float(o.get("fps", 6))),
                                  t0=a, t1=b, thr=int(body.get("thr", o.get("thr", 210))),
                                  min_conf=float(body.get("min_conf", 40)), seg_min=float(body.get("seg_min", 55)),
