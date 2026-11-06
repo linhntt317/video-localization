@@ -424,7 +424,7 @@
     <div id="pickBody" class="pickbody"></div>
     <details class="adv"><summary>Thêm video mới (tải lên, link, đường dẫn)</summary>
       <div class="pickadd">
-        <label>Tải từ điện thoại/máy tính (dưới ~100 MB qua tunnel)<input type="file" id="pkFile"></label>
+        <label id="pkFileLab">Tải từ điện thoại/máy tính (dưới ~100 MB mỗi file qua tunnel; chọn được nhiều video một lần)<input type="file" id="pkFile" accept="video/*,audio/*" multiple></label>
         <label>Dán link video (link trực tiếp hoặc Google Drive)
           <span class="row"><input type="text" id="pkUrl" placeholder="https://..." autocapitalize="off" spellcheck="false"><button class="btn" id="pkUrlBtn" type="button">Tải về</button></span></label>
         <p class="hint" id="pkMsg"></p>

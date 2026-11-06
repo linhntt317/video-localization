@@ -1029,6 +1029,7 @@ function pickSources(multi, title) {
     PK = { multi, sel: [], paths: [], resolve };
     $('#pickTitle').textContent = title || (multi ? 'Chọn các video' : 'Chọn một video');
     $('#pkMsg').textContent = '';
+    $('#pkFile').multiple = !!multi;
     await renderPick(); $('#dlgPick').showModal();
   });
 }
@@ -1054,12 +1055,29 @@ $('#dlgPick').addEventListener('close', () => {
   PK.resolve(ok ? sel.map(x => ({ [x.k]: x.v })) : []);
 });
 function pkAdd(k, v) { if (!PK.multi) PK.sel = []; if (!PK.sel.some(x => x.k === k && x.v === v)) PK.sel.push({ k, v }); renderPick(); }
+function upload1(f, onProg) {  // tải 1 file lên /api/tools/upload bằng XHR để có % tiến độ
+  return new Promise((ok, bad) => {
+    const x = new XMLHttpRequest(), fd = new FormData(); fd.append('file', f);
+    x.open('POST', CFG.base + '/api/tools/upload');
+    if (CFG.token) x.setRequestHeader('X-Access-Token', CFG.token);
+    x.upload.onprogress = ev => ev.lengthComputable && onProg(ev.loaded / ev.total);
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (e) { } x.status < 300 && j.input ? ok(j) : bad(new Error(j.error || (x.status === 401 ? 'Sai hoặc thiếu mã truy cập.' : x.status === 413 ? 'File quá lớn cho đường truyền này (tunnel giới hạn ~100 MB).' : 'Tải lên lỗi (' + x.status + ')'))); };
+    x.onerror = () => bad(new Error('Mất kết nối khi tải lên. Với file lớn hãy dùng thư mục Drive hoặc đường dẫn.'));
+    x.send(fd);
+  });
+}
 $('#pkFile').onchange = async e => {
-  const f = e.target.files[0]; if (!f) return;
-  const fd = new FormData(); fd.append('file', f); $('#pkMsg').textContent = `Đang tải lên ${f.name} ...`;
-  try { const r = await api('/api/tools/upload', { method: 'POST', body: fd }); $('#pkMsg').textContent = 'Đã tải lên.'; pkAdd('input', r.input); }
-  catch (err) { $('#pkMsg').textContent = err.message; }
-  e.target.value = '';
+  const files = [...e.target.files]; e.target.value = ''; if (!files.length) return;
+  const btn = $('#pickGo'); btn.disabled = true; let okn = 0; const fails = [];
+  for (let i = 0; i < files.length; i++) {  // lần lượt, giữ đúng thứ tự đã chọn
+    const f = files[i], tag = files.length > 1 ? `(${i + 1}/${files.length}) ` : '';
+    try {
+      const r = await upload1(f, p => { $('#pkMsg').textContent = `${tag}Đang tải ${f.name}: ${Math.round(p * 100)}%`; });
+      pkAdd('input', r.input); okn++;
+    } catch (err) { fails.push(`${f.name}: ${String(err.message).split('\n')[0].slice(0, 90)}`); }
+  }
+  btn.disabled = false;
+  $('#pkMsg').textContent = `Đã tải lên ${okn}/${files.length} video.` + (okn ? ' Đã chọn sẵn, bấm "Chọn" để thêm vào danh sách.' : '') + (fails.length ? ' Lỗi: ' + fails.join('; ') : '');
 };
 $('#pkPathBtn').onclick = () => { const v = $('#pkPath').value.trim(); if (!v) return; if (!PK.paths.includes(v)) PK.paths.push(v); $('#pkPath').value = ''; pkAdd('path', v); };
 $('#pkUrlBtn').onclick = async () => {
