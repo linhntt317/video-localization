@@ -171,10 +171,10 @@ async function init() {
   S.status = pr.status;
   $('#srvBtn').textContent = LOCAL ? 'Máy xử lý: trang này' : 'Máy xử lý: ' + CFG.base.replace(/^https?:\/\//, '');
   const st = S.status;
-  $('#chips').innerHTML = [['ffmpeg', st.ffmpeg], ['libass', st.libass], ['Tesseract', st.tesseract]].map(([n, ok]) => `<span class="chip ${ok ? '' : 'bad'}" title="${ok ? 'Đã sẵn sàng' : 'Chưa cài, xem README'}">${n}</span>`).join('');
+  $('#chips').innerHTML = [['ffmpeg', st.ffmpeg], ['libass', st.libass], ['Tesseract', st.tesseract], ...(st.rapidocr ? [['RapidOCR', true]] : [])].map(([n, ok]) => `<span class="chip ${ok ? '' : 'bad'}" title="${ok ? 'Đã sẵn sàng' : 'Chưa cài, xem README'}">${n}</span>`).join('');
   if (!st.ffmpeg) toast('Chưa tìm thấy ffmpeg. Hãy cài ffmpeg rồi mở lại (xem README).', true);
   if (st.ffmpeg && !st.libass) toast('ffmpeg của bạn thiếu libass nên không chèn được phụ đề. Hãy dùng bản ffmpeg đầy đủ (xem README).', true);
-  if (!st.tesseract) toast('Chưa tìm thấy Tesseract OCR. Cần để quét sub (xem README).', true);
+  if (!st.tesseract && !st.rapidocr) toast('Chưa có bộ đọc chữ (Tesseract hoặc RapidOCR). Cần để quét sub (xem README).', true);
   updateStepper();
   setStep(1, true);
   setTimeout(updateStepper, 80);
@@ -319,7 +319,8 @@ function enter2() {
   const sl = $('#tSlider'); sl.max = p.info.duration.toFixed(1);
   if (!S.t2) S.t2 = Math.min(p.info.duration * 0.3, p.info.duration);
   sl.value = S.t2; $('#tOut').textContent = fmt(S.t2);
-  $('#o_fps').value = o.fps; $('#o_t0').value = o.t0 || ''; $('#o_t1').value = o.t1 || ''; $('#o_thr').value = o.thr; $('#o_seg').value = o.seg_min ?? 55; $('#o_ref').checked = o.ref !== false; initOcrAsr();
+  $('#o_fps').value = o.fps; $('#o_t0').value = o.t0 || ''; $('#o_t1').value = o.t1 || ''; $('#o_thr').value = o.thr; $('#o_seg').value = o.seg_min ?? 55; $('#o_ref').checked = o.ref !== false;
+  $('#o_engine').value = o.engine || 'tesseract'; $('#o_refine').checked = o.refine !== false; initOcrAsr();
   renderBands(); showFrame2();
 }
 const showFrame2 = debounce(() => loadImg($('#frame'), $('#skel'), frameUrl(S.t2)), 120);
@@ -341,6 +342,8 @@ function saveOcrAsr() {
 }
 ['o_asr', 'o_asr_model', 'o_asr_lang'].forEach(id => $('#' + id).addEventListener('change', saveOcrAsr));
 $('#o_ref').addEventListener('change', e => { S.p.ocr.ref = e.target.checked; save(); });
+$('#o_refine').addEventListener('change', e => { S.p.ocr.refine = e.target.checked; save(); });
+$('#o_engine').addEventListener('change', e => { S.p.ocr.engine = e.target.value; save(); });
 ['fps', 't0', 't1', 'thr', 'seg'].forEach(k => $('#o_' + k).addEventListener('input', e => {
   const v = e.target.value === '' ? null : +e.target.value;
   S.p.ocr[k === 'seg' ? 'seg_min' : k] = v; save();
@@ -397,7 +400,7 @@ $('#detectBtn').onclick = async () => {
     if (!lines.length) toast('Chưa dò thấy vùng sub. Hãy kéo các dải thủ công.', true);
     else {
       const cand = lines.filter(l => l.y0 > 0.7).length ? lines.filter(l => l.y0 > 0.7) : lines;
-      S.p.bands = cand.slice(0, 3).map((l, i) => ({ name: 'Dòng ' + (i + 1), y0: l.y0, y1: l.y1, lang: S.p.bands[i]?.lang || 'eng' }));
+      S.p.bands = cand.slice(0, 3).map((l, i) => ({ name: 'Dòng ' + (i + 1), y0: l.y0, y1: l.y1, lang: l.lang || S.p.bands[i]?.lang || 'eng' }));
       S.p.primary = S.p.bands.length - 1;
       renderBands(); save(); toast(`Đã dò thấy ${S.p.bands.length} dòng sub. Hãy kiểm tra ngôn ngữ từng dòng.`);
     }

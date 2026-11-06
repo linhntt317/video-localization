@@ -7,6 +7,7 @@ import re
 import subprocess
 import tempfile
 import threading
+import traceback
 
 import cv2
 import numpy as np
@@ -16,6 +17,118 @@ from .util import Cancelled
 
 CJK_NOSPACE = {"chi_sim", "chi_tra", "jpn"}
 
+# ---------------------------------------------------------------- engine RapidOCR (PP-OCR qua onnxruntime)
+# Đọc chữ Trung tốt hơn Tesseract nhiều (độ tin cậy cao và ổn định nên ít câu bị loại vì "tin cậy thấp"),
+# cài bằng pip, không cần phần mềm hệ thống. Mô hình mặc định đọc Trung giản/phồn + Anh; ngôn ngữ khác dùng Tesseract.
+RAPID_LANGS = {"chi_sim", "chi_tra", "eng"}
+_RAPID = {"engine": None, "error": None}
+_RAPID_LOCK = threading.Lock()
+
+
+def rapid_available():
+    """True nếu dùng được RapidOCR (gói rapidocr_onnxruntime hoặc rapidocr). Khởi tạo một lần rồi giữ lại."""
+    with _RAPID_LOCK:
+        if _RAPID["engine"] is None and _RAPID["error"] is None:
+            try:
+                try:
+                    from rapidocr_onnxruntime import RapidOCR
+                    _RAPID["v2"] = False
+                except ImportError:
+                    from rapidocr import RapidOCR  # gói mới (>= 2.x)
+                    _RAPID["v2"] = True
+                _RAPID["engine"] = RapidOCR()
+            except Exception as e:  # noqa  (chưa cài / onnxruntime lỗi -> dùng Tesseract)
+                _RAPID["error"] = str(e)
+        return _RAPID["engine"] is not None
+
+
+def band_engine(lang, engine="auto"):
+    """Engine dùng cho một dải: 'rapid' hoặc 'tesseract'."""
+    engine = (engine or "auto").lower()
+    ok = set(lang.split("+")) <= RAPID_LANGS
+    if engine == "tesseract" or not ok:
+        return "tesseract"
+    if rapid_available():
+        return "rapid"
+    if engine == "rapid":
+        raise RuntimeError("Chưa dùng được RapidOCR (" + str(_RAPID["error"]) + "). Cài: pip install rapidocr-onnxruntime")
+    return "tesseract"
+
+
+def _rapid_pngs(sub, mask=None):
+    """Các phiên bản ảnh cho RapidOCR (mã hoá PNG cho gọn bộ nhớ), đọc lần lượt tới khi chắc chắn. Bộ dò chữ của RapidOCR rất
+    nhạy với cách cắt: đo trên video thật, cùng một khung mà thêm 12px lề thì đọc ra rỗng, để nguyên thì đúng (0.91) và
+    ngược lại; cắt sát chữ thì tách 1 dòng thành các ô chồng nhau, mất chữ đầu câu. Nên không dựa vào một lần đọc."""
+    out = []
+    for img in (sub, cv2.copyMakeBorder(sub, 12, 12, 12, 12, cv2.BORDER_REPLICATE),
+                cv2.resize(sub, None, fx=min(1.0, 1280.0 / sub.shape[1]), fy=min(1.0, 1280.0 / sub.shape[1]),
+                           interpolation=cv2.INTER_AREA)):
+        ok, buf = cv2.imencode(".png", img)
+        out.append(buf.tobytes())
+    return out
+
+
+def _rapid_best(pngs, lang, enough=75.0):
+    best = ("", 0.0)
+    for png in pngs:
+        r = _rapid_read(png, lang)
+        if r[0] and r[1] > best[1]:
+            best = r
+        if best[1] >= enough:
+            break
+    return best
+
+
+def _join_boxes(line, sep):
+    """Nối các ô chữ trên 1 dòng (đã xếp trái->phải). Ô chồng lên ô trước thì bỏ phần chữ trùng ở chỗ nối."""
+    out, prev_x1 = "", None
+    for b in line:
+        t = b[3]
+        if prev_x1 is not None and b[1] < prev_x1 - 0.3 * b[2] and out:
+            k = max((k for k in range(1, min(len(out), len(t)) + 1) if out.endswith(t[:k])), default=0)
+            out += t[k:]
+        else:
+            out += (sep if out else "") + t
+        prev_x1 = max(prev_x1 or 0, b[5])
+    return out
+
+
+def _rapid_read(png, lang):
+    """Đọc 1 dải bằng RapidOCR -> (chữ, độ tin cậy 0..100). Các ô chữ được xếp theo dòng rồi trái->phải."""
+    img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+    with _RAPID_LOCK:  # onnxruntime đã tự dùng nhiều nhân; gọi song song chỉ làm tranh CPU
+        eng = _RAPID["engine"]
+        if _RAPID.get("v2"):
+            r = eng(img)
+            parts = [getattr(r, k, None) for k in ("boxes", "txts", "scores")]
+            items = [] if any(x is None for x in parts) else list(zip(*parts))
+        else:
+            r, _ = eng(img)
+            items = r or []
+    boxes = []
+    for b, t, s in items:
+        t = (t or "").strip()
+        if not t or float(s) < 0.3:
+            continue
+        ys = [p[1] for p in b]
+        xs = [p[0] for p in b]
+        boxes.append((sum(ys) / len(ys), min(xs), max(max(ys) - min(ys), 1.0), t, float(s), max(xs)))
+    if not boxes:
+        return "", 0.0
+    boxes.sort()
+    lines = [[boxes[0]]]
+    for bx in boxes[1:]:
+        cy = sum(x[0] for x in lines[-1]) / len(lines[-1])
+        if abs(bx[0] - cy) <= 0.6 * max(bx[2], lines[-1][0][2]):
+            lines[-1].append(bx)
+        else:
+            lines.append([bx])
+    sep = "" if lang.split("+")[0] in CJK_NOSPACE else " "
+    text = " ".join(_join_boxes(sorted(ln, key=lambda x: x[1]), sep) for ln in lines)
+    n = sum(len(x[3]) for x in boxes)
+    conf = 100.0 * sum(x[4] * len(x[3]) for x in boxes) / max(1, n)
+    return text, conf
+
 
 def _raw_frames(video, t0, t1, fps, y0, h, w):
     cmd = [util.need_ffmpeg(), "-v", "error", "-nostdin", "-ss", f"{t0:.3f}", "-i", video, "-t", f"{t1 - t0:.3f}",
@@ -24,8 +137,96 @@ def _raw_frames(video, t0, t1, fps, y0, h, w):
     return p
 
 
-def detect_bands(video, info, samples=20):
-    """Tự dò các dòng sub cứng ở nửa dưới khung hình. Trả về danh sách dòng (y0,y1 theo tỉ lệ chiều cao)."""
+def _detect_bands_rapid(video, info, samples=24, y_from=0.55):
+    """Dò dòng sub bằng chính bộ OCR (cách của bản desktop): đọc các khung mẫu ở phần dưới khung hình, bỏ chữ đứng yên
+    (logo/watermark: cùng chữ cùng chỗ ở >= nửa số khung) và chữ dọc (tên nhân vật), gom các ô chữ theo dòng; dòng xuất
+    hiện ở nhiều khung nhất là sub. Không bị nền sáng đánh lừa như cách đếm điểm sáng. Trả về [] nếu không đủ bằng chứng."""
+    W, H, dur = info["width"], info["height"], float(info["duration"])
+    if dur <= 0 or not rapid_available():
+        return []
+    y_start = int(H * y_from)
+    crop_h = H - y_start
+    crop_h -= crop_h % 2
+    sw = min(1280, W)
+    sc = sw / W
+    cand, n = [], 0
+    for i in range(samples):
+        t = dur * (0.03 + 0.94 * (i + 0.5) / samples)
+        cmd = [util.need_ffmpeg(), "-v", "error", "-nostdin", "-ss", f"{t:.2f}", "-i", video, "-frames:v", "1",
+               "-vf", f"crop={W}:{crop_h}:0:{y_start},scale={sw}:-2", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+        raw = subprocess.run(cmd, capture_output=True, creationflags=util.NOWINDOW).stdout
+        h = len(raw) // (sw * 3)
+        if h < 8:
+            continue
+        img = np.frombuffer(raw[: h * sw * 3], np.uint8).reshape(h, sw, 3)
+        with _RAPID_LOCK:
+            if _RAPID.get("v2"):
+                r = _RAPID["engine"](img)
+                parts = [getattr(r, k, None) for k in ("boxes", "txts", "scores")]
+                items = [] if any(x is None for x in parts) else list(zip(*parts))
+            else:
+                items = _RAPID["engine"](img)[0] or []
+        n += 1
+        for b, txt, s in items:
+            txt = (txt or "").strip()
+            if float(s) < 0.6 or not re.search(r"[A-Za-zÀ-ỹ" + _CJK_CH + "]", txt):
+                continue
+            ys = [q[1] for q in b]
+            xs = [q[0] for q in b]
+            y0, y1, x0, x1 = min(ys), max(ys), min(xs), max(xs)
+            bh = (y1 - y0) / sc
+            if not (0.015 * H <= bh <= 0.12 * H) or ((x1 - x0) < 1.2 * (y1 - y0) and len(txt) > 1):
+                continue  # quá nhỏ/quá to, hoặc chữ dọc
+            cand.append({"fi": i, "txt": txt, "y0": y_start + y0 / sc, "y1": y_start + y1 / sc, "h": bh,
+                         "cx": (x0 + x1) / 2 / sc, "cjk": len(re.findall(rf"[{_CJK_CH}]", txt)) >= 0.5 * len(txt)})
+    if n < 6 or not cand:
+        return []
+    seen = collections.defaultdict(set)
+    for c in cand:
+        seen[(c["txt"], round(c["cx"] / 40), round((c["y0"] + c["y1"]) / 80))].add(c["fi"])
+    static = {k for k, v in seen.items() if len(v) >= max(4, 0.5 * n)}
+    cand = [c for c in cand if (c["txt"], round(c["cx"] / 40), round((c["y0"] + c["y1"]) / 80)) not in static]
+    if not cand:
+        return []
+    med_h = float(np.median([c["h"] for c in cand]))
+    cand.sort(key=lambda c: (c["y0"] + c["y1"]) / 2)
+    clusters = []
+    for c in cand:
+        cy = (c["y0"] + c["y1"]) / 2
+        if clusters and cy - clusters[-1]["cy"] <= 0.6 * med_h:
+            cl = clusters[-1]
+            cl["items"].append(c)
+            cl["cy"] = float(np.mean([(x["y0"] + x["y1"]) / 2 for x in cl["items"]]))
+        else:
+            clusters.append({"items": [c], "cy": cy})
+    lines = []
+    for cl in clusters:
+        frames_hit = len({x["fi"] for x in cl["items"]})
+        if frames_hit < max(3, int(0.12 * n)):
+            continue
+        it = cl["items"]
+        hh = float(np.median([x["h"] for x in it]))
+        y0 = float(np.percentile([x["y0"] for x in it], 5)) - 0.15 * hh
+        y1 = float(np.percentile([x["y1"] for x in it], 95)) + 0.15 * hh
+        cjk = sum(x["cjk"] for x in it) >= 0.5 * len(it)
+        lines.append({"y0": round(max(0.0, y0 / H), 4), "y1": round(min(1.0, y1 / H), 4),
+                      "score": round(frames_hit / n, 3), "lang": "chi_sim" if cjk else "eng"})
+    lines.sort(key=lambda l: -l["score"])
+    lines = lines[:3]
+    lines.sort(key=lambda l: l["y0"])
+    return lines
+
+
+def detect_bands(video, info, samples=20, engine="tesseract"):
+    """Tự dò các dòng sub cứng ở nửa dưới khung hình. Trả về danh sách dòng (y0,y1 theo tỉ lệ chiều cao).
+    engine != 'tesseract' và có RapidOCR thì dò bằng OCR (kèm đoán ngôn ngữ); còn lại đếm điểm chữ sáng như cũ."""
+    try:
+        lines = _detect_bands_rapid(video, info) if (engine or "tesseract") != "tesseract" else []
+    except Exception:  # noqa
+        traceback.print_exc()
+        lines = []
+    if lines:
+        return lines
     W, H, dur = info["width"], info["height"], info["duration"]
     y_start = int(H * 0.60)
     crop_h = H - y_start
@@ -79,11 +280,15 @@ def detect_bands(video, info, samples=20):
         height_frac = (b - a) / sc / H
         if height_frac < 0.012:
             continue
-        pieces = [(a, b)]
-        if height_frac > 0.085:  # có thể là 2 dòng dính nhau: cắt ở chỗ ít chữ nhất
-            lo, hi = a + int((b - a) * 0.3), a + int((b - a) * 0.7)
-            cut = lo + int(np.argmin(pix[lo:hi + 1]))
-            pieces = [(a, cut), (cut, b)]
+        pieces, todo = [], [(a, b)]
+        while todo:  # có thể là nhiều dòng dính nhau (hoặc dính nền sáng): cắt ở chỗ ít chữ nhất tới khi đủ thấp
+            x, y = todo.pop()
+            if (y - x) / sc / H > 0.085 and len(pieces) + len(todo) < 6:
+                lo, hi = x + int((y - x) * 0.3), x + int((y - x) * 0.7)
+                cut = lo + int(np.argmin(pix[lo:hi + 1]))
+                todo += [(x, cut), (cut, y)]
+            elif (y - x) / sc / H >= 0.012:
+                pieces.append((x, y))
         for x, y in pieces:
             lines.append({
                 "y0": round(max(0.0, (y_start + x / sc) / H - 0.006), 4),
@@ -109,6 +314,9 @@ def _ocr_best(pngs, lang, tess, enough=86.0):
 
 
 _OEM = ["--oem", "1"]  # chỉ dùng LSTM: nhanh hơn ~1,5 lần; tự bỏ nếu bản Tesseract không hỗ trợ
+# Xuất TSV bằng tham số thay vì tên cấu hình "tsv": cấu hình đó là file tessdata/configs/tsv, KHÔNG có khi TESSDATA_PREFIX
+# trỏ vào thư mục chỉ chứa *.traineddata (setup.bat) -> Tesseract in chữ thường, TSV rỗng -> quét ra 0 câu.
+_TSV = ["-c", "tessedit_create_tsv=1", "-c", "tessedit_create_txt=0"]
 
 
 def _ocr_batch(pngs, lang, tess):
@@ -128,11 +336,11 @@ def _ocr_batch(pngs, lang, tess):
         lst = os.path.join(d, "list.txt")
         with open(lst, "w", encoding="utf-8") as f:
             f.write("\n".join(paths))
-        r = subprocess.run([tess, lst, "stdout", "-l", lang, "--psm", "7"] + _OEM + ["tsv"], capture_output=True, env=env,
+        r = subprocess.run([tess, lst, "stdout", "-l", lang, "--psm", "7"] + _OEM + _TSV, capture_output=True, env=env,
                            creationflags=util.NOWINDOW)
         if r.returncode != 0 and _OEM:
             _OEM = []  # bản Tesseract/dữ liệu ngôn ngữ không hỗ trợ --oem 1: chạy lại như thường
-            r = subprocess.run([tess, lst, "stdout", "-l", lang, "--psm", "7", "tsv"], capture_output=True, env=env,
+            r = subprocess.run([tess, lst, "stdout", "-l", lang, "--psm", "7"] + _TSV, capture_output=True, env=env,
                                creationflags=util.NOWINDOW)
     pages = {}
     for ln in r.stdout.decode("utf-8", "ignore").splitlines()[1:]:
@@ -155,7 +363,7 @@ def _ocr_batch(pngs, lang, tess):
 
 def _ocr_png(png, lang, tess):
     env = dict(os.environ, OMP_THREAD_LIMIT="1")
-    out = subprocess.run([tess, "stdin", "stdout", "-l", lang, "--psm", "7", "tsv"], input=png,
+    out = subprocess.run([tess, "stdin", "stdout", "-l", lang, "--psm", "7"] + _TSV, input=png,
                          capture_output=True, env=env, creationflags=util.NOWINDOW)
     words, confs = [], []
     for ln in out.stdout.decode("utf-8", "ignore").splitlines()[1:]:
@@ -237,23 +445,194 @@ def _clean(t):
     while toks and not keep(toks[-1]):
         toks.pop()
     out = " ".join(toks)
-    return re.sub(r"^[^\w\u3040-\u9fff\uac00-\ud7af'\"“¿¡]+", "", out).strip()
+    return re.sub(r"^[^\w\u3040-\u9fff\uac00-\ud7af'\"“¿¡(（《「『]+", "", out).strip()
 
 
 def _norm(s):
     return re.sub(r"[\W_]+", "", s.lower())
 
 
-def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_conf=40.0, seg_min=55.0, task=None, cb=None, debug=None, ref=True):
-    """bands: [{name,y0,y1,lang}]  (y theo tỉ lệ 0..1). primary: chỉ số dòng dùng để chia câu & dịch."""
-    tess = util.tesseract_bin()
-    if not tess:
-        raise RuntimeError("Không tìm thấy Tesseract OCR. Hãy cài Tesseract (xem README).")
-    have = set(util.tesseract_langs())
-    for b in bands:
-        for l in b["lang"].split("+"):
-            if l not in have:
-                raise RuntimeError(f"Tesseract chưa có ngôn ngữ '{l}'. Cài thêm gói ngôn ngữ (xem README).")
+_CJK_CH = r"぀-ヿ㐀-鿿가-힯"
+_CJK_PUNCT = r"，。！？、；：…“”‘’《》「」『』～·?!,.…"
+
+
+def _clean_cjk(t):
+    """Dọn chữ Trung/Nhật/Hàn đọc ra: bỏ khoảng trắng giữa các chữ (OCR hay tách ô), '-' ở đầu/giữa chữ Hán là '一' đọc nhầm,
+    bỏ rác ngắn (1-2 ký tự không phải chữ) ở hai đầu: '19下姐姐教我CE' -> '下姐姐教我', '我我是苏晚棠（（' -> '我我是苏晚棠'."""
+    t = re.sub(rf"(?<=[{_CJK_CH}])\s+(?=[{_CJK_CH}\-—_])", "", t)
+    t = re.sub(rf"(?<=[\-—_])\s+(?=[{_CJK_CH}])", "", t)
+    t = re.sub(rf"(^|(?<=[{_CJK_CH}]))[-—_](?=[{_CJK_CH}])", "一", t)
+    edge = rf"[^{_CJK_CH}{_CJK_PUNCT}]{{1,2}}"
+    for _ in range(2):
+        t = re.sub(rf"^\s*{edge}(?=[{_CJK_CH}])", "", t)
+        t = re.sub(rf"(?<=[{_CJK_CH}{_CJK_PUNCT}]){edge}$", "", t.strip())
+        t = re.sub(r"[（(《「『“]+$", "", t.strip())       # ngoặc mở ở cuối câu = rác
+        t = re.sub(r"^[）)》」』”]+", "", t)                # ngoặc đóng ở đầu câu = rác
+        for o, c in ("（）", "()"):
+            if t.endswith(c) and o not in t:
+                t = t.rstrip(c)
+            if t.startswith(o) and c not in t:
+                t = t.lstrip(o)
+    return t.strip()
+
+
+def _clean_lang(t, lang):
+    if lang.split("+")[0] not in CJK_NOSPACE:
+        return _clean(t)
+    t = re.sub(rf"(^|(?<=[{_CJK_CH}]))\s*[-—_]\s*(?=[{_CJK_CH}])", "一", t.strip())  # trước _clean (nó bỏ '-' đầu câu)
+    return _clean_cjk(_clean(t))
+
+
+def _key_diff(a, b):
+    """Độ khác nhau giữa 2 mặt nạ chữ đã thu nhỏ (0 = giống hệt). Dùng để biết sub đổi câu hay chưa."""
+    if a is None or b is None or a.shape != b.shape:
+        return 1.0
+    return float(np.abs(a - b).sum()) / max(1.0, float(max(a.sum(), b.sum())))
+
+
+def _mask_key(mask, W):
+    return cv2.resize(mask, (max(1, W // 3), max(1, mask.shape[0] // 3)), interpolation=cv2.INTER_AREA).astype(np.float32)
+
+
+def _cue_ok(text, conf, lang):
+    """Lọc rác của luồng quét chính: chữ phải giống chữ thật (plausible). Riêng chữ Hán cho phép câu 1 chữ (嗯/好/啊)
+    nếu đọc rất chắc."""
+    first = lang.split("+")[0]
+    if first in CJK_NOSPACE or first == "kor":
+        core = re.sub(r"[^\w]", "", text)
+        cjk = len(re.findall(rf"[{_CJK_CH}]", core))
+        # chữ "thật": bỏ các chữ chỉ gồm nét ngang/dọc (一 二 丨) - viền sáng, vạch nền, dấu '-' đều hay bị đọc thành chúng
+        real = len(re.findall(rf"[{_CJK_CH}]", re.sub(r"[一二三丨丶]", "", core)))
+        if real == 0:
+            return False
+        if cjk == 1 and len(core) == 1:
+            return conf >= 75
+        return cjk >= 2 and real >= 0.5 * cjk and cjk >= 0.6 * len(core)
+    return plausible(text, lang)
+
+
+def _refine_times(video, info, cues, a, z, W, thr, fps, t0, t1, task=None):
+    """Tinh chỉnh mốc start/end theo TỪNG KHUNG ở fps gốc (cách của bản desktop): mốc thô chỉ chính xác tới 1/fps quét;
+    giải mã 1 lượt dải chữ chính, chỉ xét khung nằm trong cửa sổ quanh mỗi mốc, 'có sub' = mặt nạ chữ giống mặt nạ tham
+    chiếu của câu. Sửa tại chỗ, trả về số mốc đã dời."""
+    nf = float(info.get("fps") or 0)
+    if not (5.0 <= nf <= 120.0) or not cues:
+        return 0
+    step = 1.0 / nf
+    win = []
+    for i, c in enumerate(cues):
+        if c.get("_k0") is not None:
+            win.append((c["start"] - 1.0 / fps - 2 * step, c["start"] + 2 * step, i, "s"))
+        if c.get("_k1") is not None:
+            win.append((c["end"] - 1.0 / fps - 2 * step, c["end"] + 2 * step, i, "e"))
+    if not win:
+        return 0
+    win.sort(key=lambda w: w[0])
+    h = (z - a) - (z - a) % 2
+    lo = max(0.0, win[0][0] - 0.1)
+    hi = min(t1, max(w[1] for w in win) + 0.2)
+    cmd = [util.need_ffmpeg(), "-v", "error", "-nostdin", "-ss", f"{lo:.3f}", "-i", video, "-t", f"{hi - lo:.3f}",
+           "-an", "-sn", "-vf", f"crop={W}:{h}:0:{a}", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=util.NOWINDOW)
+    fsize = W * h * 3
+    obs, active, wi, k = {}, [], 0, 0
+    try:
+        while True:
+            if task is not None and task.cancel:
+                raise Cancelled()
+            buf = p.stdout.read(fsize)
+            if len(buf) < fsize:
+                break
+            t = lo + k * step
+            k += 1
+            while wi < len(win) and win[wi][0] <= t:
+                active.append(win[wi])
+                wi += 1
+            active = [w for w in active if w[1] >= t]
+            if not active:
+                if wi >= len(win):
+                    break
+                continue
+            sub = np.frombuffer(buf, np.uint8).reshape(h, W, 3)
+            mask, _ = _text_mask(sub, thr)
+            key = _mask_key(mask, W) if mask.sum() >= mask.size * 0.002 else None
+            for _, _, i, kind in active:
+                ref_key = cues[i]["_k0" if kind == "s" else "_k1"]
+                obs.setdefault((i, kind), []).append((t, key is not None and _key_diff(ref_key, key) < 0.5))
+    finally:
+        if p.poll() is None:
+            p.kill()
+        p.wait()
+    moved = 0
+    for i, c in enumerate(cues):
+        o = obs.get((i, "s"))
+        if o and not o[0][1]:
+            vis = [t for t, v in o if v]
+            if vis:
+                moved += abs(vis[0] - c["start"]) >= step * 0.99
+                c["start"] = vis[0]
+        o = obs.get((i, "e"))
+        if o and not o[-1][1]:
+            vis = [t for t, v in o if v]
+            if vis:
+                ne = vis[-1] + step
+                moved += abs(ne - c["end"]) >= step * 0.99
+                c["end"] = ne
+    for i, c in enumerate(cues):  # không để chồng lấn / quá ngắn sau khi dời mốc
+        if c["end"] - c["start"] < 0.1:
+            c["end"] = c["start"] + 0.1
+        if i and c["start"] < cues[i - 1]["end"]:
+            mid = (c["start"] + cues[i - 1]["end"]) / 2
+            cues[i - 1]["end"] = max(mid, cues[i - 1]["start"] + 0.1)
+            c["start"] = cues[i - 1]["end"]
+    return moved
+
+
+def _merge_adjacent(cues, fps):
+    """Gộp câu liền kề bị tách đôi (sub chớp do nén, đọc lệch 1 chữ: '听话有交大' | '听话有奖大') và mảnh mờ dần ngắn nằm
+    trọn trong câu bên cạnh. Giữ chữ của phần đọc được nhiều khung hơn."""
+    out = []
+    gap_max = 1.5 / fps + 0.02
+    for c in cues:
+        if out:
+            g = out[-1]
+            gap = c["start"] - g["end"]
+            a, b = _norm(g["src"]), _norm(c["src"])
+            same = difflib.SequenceMatcher(None, a, b).ratio() >= 0.8
+            frag = (min(len(a), len(b)) >= 1 and (a in b or b in a)
+                    and min(g["end"] - g["start"], c["end"] - c["start"]) <= 2.1 / fps)
+            if gap <= gap_max and (same or frag):
+                if frag and not same:
+                    keep_c = len(b) > len(a)
+                else:
+                    keep_c = (c["_n"] * c["conf"], len(b)) > (g["_n"] * g["conf"], len(a))
+                if keep_c:
+                    g["src"], g["ref"] = c["src"], c["ref"]
+                g["conf"] = round((g["conf"] * g["_n"] + c["conf"] * c["_n"]) / max(1, g["_n"] + c["_n"]))
+                g["_n"] += c["_n"]
+                g["end"], g["_k1"] = c["end"], c["_k1"]
+                continue
+        out.append(c)
+    return out
+
+
+def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_conf=40.0, seg_min=55.0, task=None, cb=None,
+            debug=None, ref=True, engine="tesseract", refine=True):
+    """bands: [{name,y0,y1,lang}]  (y theo tỉ lệ 0..1). primary: chỉ số dòng dùng để chia câu & dịch.
+    engine: 'tesseract' (mặc định) | 'rapid' (RapidOCR, thử nghiệm) | 'auto' (RapidOCR cho Trung/Anh nếu đã cài).
+    refine: tinh chỉnh mốc start/end theo từng khung ở fps gốc của video (thêm 1 lượt giải mã dải chữ chính)."""
+    use = [band_engine(b["lang"], engine) if (ref or bi == primary) else None for bi, b in enumerate(bands)]
+    tess = None
+    if "tesseract" in use:
+        tess = util.tesseract_bin()
+        if not tess:
+            raise RuntimeError("Không tìm thấy Tesseract OCR. Hãy cài Tesseract (xem README), "
+                               "hoặc pip install rapidocr-onnxruntime để đọc chữ Trung/Anh.")
+        have = set(util.tesseract_langs())
+        for b, e in zip(bands, use):
+            for l in (b["lang"].split("+") if e == "tesseract" else []):
+                if l not in have:
+                    raise RuntimeError(f"Tesseract chưa có ngôn ngữ '{l}'. Cài thêm gói ngôn ngữ (xem README).")
     W, H = info["width"], info["height"]
     t1 = min(t1 or info["duration"], info["duration"])
     px = []
@@ -274,10 +653,12 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
 
     nb = len(bands)
     ncpu = max(1, min(8, os.cpu_count() or 2))
-    jobs = []          # (band_index, [png các phiên bản])
+    jobs = []          # (band_index, [ảnh các phiên bản]) — ảnh được bỏ ngay khi đọc xong cho nhẹ bộ nhớ
+    job_key = []       # mặt nạ thu nhỏ lúc tạo job (tham chiếu để tinh chỉnh mốc thời gian)
     frames = []        # mỗi khung: [chỉ số job hoặc None cho từng dòng]
     last_key = [None] * nb
     last_job = [None] * nb
+    job_px = [0.0] * nb  # lượng điểm chữ lúc tạo job đang dùng của từng dòng
     res = {}           # job -> (chữ, tin cậy)
     lock = threading.Lock()
     prog = {"done": 0}
@@ -287,7 +668,7 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
         """Tính mặt nạ chữ cho mọi dòng của một khung (chạy song song nhiều khung)."""
         out = []
         for bi, (a, z) in enumerate(px):
-            if not ref and bi != primary:  # bỏ dòng đối chiếu cho nhanh
+            if use[bi] is None:  # bỏ dòng đối chiếu cho nhanh
                 out.append(None)
                 continue
             sub = img[a - ymin: z - ymin]
@@ -295,14 +676,21 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
             if mask.sum() < mask.size * 0.002:
                 out.append(False)
                 continue
-            key = cv2.resize(mask, (max(1, W // 3), max(1, sub.shape[0] // 3)), interpolation=cv2.INTER_AREA).astype(np.float32)
-            out.append((mask, soft, key, sub))
+            out.append((mask, soft, _mask_key(mask, W), sub))
         return out
 
     def run_jobs(idx):
-        """Đọc một lô job: vòng 1 cho tất cả, chỉ job chưa đủ chắc mới thử phiên bản ảnh kế tiếp (gom lô theo ngôn ngữ)."""
+        """Đọc một lô job. RapidOCR: 1 lần/ảnh. Tesseract: vòng 1 cho tất cả, chỉ job chưa đủ chắc mới thử phiên bản
+        ảnh kế tiếp (gom lô theo ngôn ngữ)."""
         best = {j: ("", 0.0) for j in idx}
-        pending = list(idx)
+        pending = []
+        for j in idx:
+            if use[jobs[j][0]] == "rapid":
+                if task is not None and task.cancel:
+                    return
+                best[j] = _rapid_best(jobs[j][1], bands[jobs[j][0]]["lang"])
+            else:
+                pending.append(j)
         for rnd in range(4):
             if task is not None and task.cancel:
                 return
@@ -319,6 +707,8 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
         with lock:
             res.update(best)
             prog["done"] += len(idx)
+            for j in idx:
+                jobs[j] = (jobs[j][0], None)
 
     mask_pool = cf.ThreadPoolExecutor(ncpu)
     ocr_pool = cf.ThreadPoolExecutor(ncpu)
@@ -338,24 +728,32 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
                         last_key[bi] = None
                     else:
                         mask, soft, key, sub = a
-                        if (last_key[bi] is not None and last_key[bi].shape == key.shape
-                                and float(np.abs(key - last_key[bi]).sum()) / max(1.0, float(max(key.sum(), last_key[bi].sum()))) < 0.35):
+                        ks = float(key.sum())
+                        # cùng câu (hình chữ gần như không đổi) -> dùng lại chữ đã đọc; NHƯNG nếu chữ đậm/đủ hơn hẳn lúc
+                        # đọc (đang hiện dần: lần đọc đầu thiếu chữ, vd '是热的我是活' thiếu '人') thì đọc lại
+                        if _key_diff(last_key[bi], key) < 0.35 and ks <= 1.2 * job_px[bi]:
                             row.append(last_job[bi])
                         else:
-                            pngs = []
-                            white = (sub.min(2) >= thr).astype(np.uint8)  # chữ trắng tuyệt đối: sạch nét nhất khi nền không sáng
-                            if 0.002 < white.mean() < 0.25:
-                                pngs.append(_prep_png(white))
-                            pngs += [_prep_png(mask), _prep_png(mask, soft)]
-                            pngs.append(_prep_gray(sub))  # cách đọc dự phòng cho chữ rất mỏng/viền mỏng
-                            jobs.append((bi, pngs))
-                            last_job[bi] = len(jobs) - 1
+                            if use[bi] == "rapid":
+                                pngs = _rapid_pngs(sub, mask)
+                            else:
+                                pngs = []
+                                white = (sub.min(2) >= thr).astype(np.uint8)  # chữ trắng tuyệt đối: sạch nét nhất khi nền không sáng
+                                if 0.002 < white.mean() < 0.25:
+                                    pngs.append(_prep_png(white))
+                                pngs += [_prep_png(mask), _prep_png(mask, soft)]
+                                pngs.append(_prep_gray(sub))  # cách đọc dự phòng cho chữ rất mỏng/viền mỏng
+                            with lock:
+                                jobs.append((bi, pngs))
+                                job_key.append(key if bi == primary else None)
+                                last_job[bi] = len(jobs) - 1
+                            job_px[bi] = ks
                             backlog.append(last_job[bi])
                             row.append(last_job[bi])
                         last_key[bi] = key
                 frames.append(row)
             window.clear()
-        while len(backlog) >= BATCH:  # đủ một lô thì cho chạy Tesseract ngay, trong lúc vẫn đọc tiếp khung hình
+        while len(backlog) >= BATCH:  # đủ một lô thì cho chạy OCR ngay, trong lúc vẫn đọc tiếp khung hình
             futs.append(ocr_pool.submit(run_jobs, backlog[:BATCH]))
             backlog = backlog[BATCH:]
 
@@ -372,7 +770,7 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
             if len(window) >= 24:
                 flush()
                 if cb:
-                    cb(0.9 * min(1.0, idx / total), f"Đọc khung hình {idx}/{total} · đã nhận dạng {prog['done']}/{len(jobs)} chữ")
+                    cb(0.85 * min(1.0, idx / total), f"Đọc khung hình {idx}/{total} · đã nhận dạng {prog['done']}/{len(jobs)} chữ")
         flush()
         p.wait()
         if backlog:
@@ -383,7 +781,7 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
                 raise Cancelled()
             f.result()
             if cb:
-                cb(0.9 + 0.1 * n / max(1, len(futs)), f"Nhận dạng chữ {prog['done']}/{len(jobs)}")
+                cb(0.85 + 0.07 * n / max(1, len(futs)), f"Nhận dạng chữ {prog['done']}/{len(jobs)}")
     finally:
         mask_pool.shutdown(wait=False, cancel_futures=True)
         ocr_pool.shutdown(wait=False, cancel_futures=True)
@@ -392,14 +790,17 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
     if task is not None and task.cancel:
         raise Cancelled()
     results = [res.get(j, ("", 0.0)) for j in range(len(jobs))]
+    cleaned = {}
 
     def text_at(fi, bi):
         j = frames[fi][bi]
         if j is None or results[j] is None:
             return "", 0.0
-        t, c = results[j]
-        t = _clean(t)
-        return (t, c) if (c >= min_conf and len(_norm(t)) >= 1) else ("", 0.0)
+        if j not in cleaned:
+            t, c = results[j]
+            t = _clean_lang(t, bands[bi]["lang"])
+            cleaned[j] = (t, c) if (c >= min_conf and len(_norm(t)) >= 1) else ("", 0.0)
+        return cleaned[j]
 
     if debug is not None:
         for fi in range(len(frames)):
@@ -429,16 +830,17 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
     if cur is not None:
         segs.append(cur)
 
+    plang = bands[primary]["lang"]
     cues = []
     for s in segs:
-        dur = (s["end_i"] - s["start_i"] + 1) / fps
-        if dur < 0.25:
-            continue
         seg_conf = sum(c for _, c in s["texts"]) / len(s["texts"])
-        if seg_conf < seg_min or len(_norm(max((t for t, _ in s["texts"]), key=len))) < 2:
-            continue
         counter = collections.Counter(t for t, _ in s["texts"])
         top = max(counter.items(), key=lambda kv: (kv[1], len(kv[0])))[0]
+        # câu chỉ thấy ở 1 khung (< 0,25s ở fps 6) trước đây luôn bị bỏ -> mất câu ngắn; nay giữ nếu đọc chắc chắn
+        if (s["end_i"] - s["start_i"] + 1) / fps < 0.25 and seg_conf < max(seg_min, 70.0):
+            continue
+        if seg_conf < seg_min or not _cue_ok(top, seg_conf, plang):
+            continue
         refs = []
         for bi in range(len(bands)):
             if bi == primary:
@@ -451,25 +853,42 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
             if c2:
                 refs.append(max(c2.items(), key=lambda kv: (kv[1], len(kv[0])))[0])
         cues.append({
-            "start": round(t0 + s["start_i"] / fps, 2),
-            "end": round(t0 + (s["end_i"] + 1) / fps, 2),
+            "start": t0 + s["start_i"] / fps,
+            "end": t0 + (s["end_i"] + 1) / fps,
             "src": top,
             "ref": " | ".join(refs),
             "vi": "",
             "conf": round(seg_conf),
+            "_n": len(s["texts"]),
+            "_k0": job_key[frames[s["start_i"]][primary]],
+            "_k1": job_key[frames[s["end_i"]][primary]],
         })
+    cues = _merge_adjacent(cues, fps)
+    if refine and cues:
+        if cb:
+            cb(0.93, "Tinh chỉnh mốc thời gian theo từng khung hình")
+        try:
+            _refine_times(video, info, cues, px[primary][0], px[primary][1], W, thr, fps, t0, t1, task=task)
+        except Cancelled:
+            raise
+        except Exception:  # noqa  (lỗi tinh chỉnh không được làm mất kết quả quét)
+            traceback.print_exc()
     for i, c in enumerate(cues, 1):
+        for k in ("_n", "_k0", "_k1"):
+            c.pop(k, None)
+        c["start"], c["end"] = round(c["start"], 3), round(c["end"], 3)
         c["id"] = i
     if cb:
         cb(1.0, f"Xong: {len(cues)} câu")
     return cues
 
 
-def probe_frame(video, info, bands, primary, t, thr=210, min_conf=40.0, seg_min=55.0):
+def probe_frame(video, info, bands, primary, t, thr=210, min_conf=40.0, seg_min=55.0, engine="tesseract"):
     """Chẩn đoán một khung hình: với từng dải trả về ảnh cắt, ảnh chữ tách được, chữ đọc ra, độ tin cậy và lý do bị bỏ (nếu có)."""
     import base64
-    tess = util.tesseract_bin()
-    if not tess:
+    use = [band_engine(b["lang"], engine) for b in bands]
+    tess = util.tesseract_bin() if "tesseract" in use else None
+    if "tesseract" in use and not tess:
         raise RuntimeError("Không tìm thấy Tesseract OCR.")
     W, H = info["width"], info["height"]
     cmd = [util.need_ffmpeg(), "-v", "error", "-nostdin", "-ss", f"{max(0.0, t):.3f}", "-i", video, "-frames:v", "1",
@@ -500,13 +919,17 @@ def probe_frame(video, info, bands, primary, t, thr=210, min_conf=40.0, seg_min=
         if pres < 0.002:
             item["reason"] = "no_text"
         else:
-            pngs = []
-            white = (sub.min(2) >= thr).astype(np.uint8)
-            if 0.002 < white.mean() < 0.25:
-                pngs.append(_prep_png(white))
-            pngs += [_prep_png(mask), _prep_png(mask, soft), _prep_gray(sub)]
-            text, conf = _ocr_best(pngs, b["lang"], tess, enough=101.0)
-            item["text"], item["conf"] = _clean(text), round(conf, 1)
+            if use[bi] == "rapid":
+                text, conf = _rapid_best(_rapid_pngs(sub, mask), b["lang"])
+            else:
+                pngs = []
+                white = (sub.min(2) >= thr).astype(np.uint8)
+                if 0.002 < white.mean() < 0.25:
+                    pngs.append(_prep_png(white))
+                pngs += [_prep_png(mask), _prep_png(mask, soft), _prep_gray(sub)]
+                text, conf = _ocr_best(pngs, b["lang"], tess, enough=101.0)
+            item["engine"] = use[bi]
+            item["text"], item["conf"] = _clean_lang(text, b["lang"]), round(conf, 1)
             if not item["text"]:
                 item["reason"] = "unreadable"
             elif conf < min_conf:
@@ -536,7 +959,7 @@ def plausible(text, lang):
     return len(good) >= max(1, int(0.6 * len(words)))
 
 
-def deep_scan(video, info, bands, primary, t0, t1, thr=210, task=None, cb=None):
+def deep_scan(video, info, bands, primary, t0, t1, thr=210, task=None, cb=None, engine="tesseract"):
     """OCR thật kỹ một đoạn ngắn để xác thực: nhiều mức độ nhạy, tốc độ khung cao, thử lần lượt từng dòng làm dòng chính.
     Chỉ giữ câu có chữ hợp lệ (plausible) và độ tin cậy đủ. Trả về danh sách câu (đã gỡ trùng)."""
     dur = float(info["duration"])
@@ -553,7 +976,7 @@ def deep_scan(video, info, bands, primary, t0, t1, thr=210, task=None, cb=None):
             if task is not None and task.cancel:
                 raise Cancelled()
             cues = run_ocr(video, info, bands, bi, fps=fps, t0=t0, t1=t1, thr=int(max(120, min(254, th))),
-                           min_conf=25.0, seg_min=35.0, ref=False, task=task)
+                           min_conf=25.0, seg_min=35.0, ref=False, task=task, engine=engine, refine=False)
             for c in cues:
                 if c.get("conf", 0) >= 45 and plausible(c["src"], lang):
                     c["_band"] = bi

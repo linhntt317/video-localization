@@ -91,7 +91,7 @@ def audio_path(project_dir, key):
 def audio_duration(path):
     fp = util.ffprobe_bin()
     r = subprocess.run([fp, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path], capture_output=True,
-                       text=True, creationflags=util.NOWINDOW)
+                       text=True, encoding="utf-8", errors="replace", creationflags=util.NOWINDOW)
     try:
         return float(r.stdout.strip())
     except ValueError:

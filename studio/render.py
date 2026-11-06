@@ -459,7 +459,7 @@ def check_youtube(path):
     fp = util.ffprobe_bin()
     import json
     out = subprocess.run([fp, "-v", "error", "-print_format", "json", "-show_streams", path],
-                         capture_output=True, text=True, creationflags=util.NOWINDOW)
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=util.NOWINDOW)
     streams = json.loads(out.stdout).get("streams", [])
     v = next((s for s in streams if s["codec_type"] == "video"), {})
     a = next((s for s in streams if s["codec_type"] == "audio"), None)

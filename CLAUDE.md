@@ -65,3 +65,10 @@ Công cụ: từ video có sub cứng (Trung/Anh) → OCR → SRT → dịch Vi�
 
 ## Quy ước
 - Giao diện tiếng Việt. Không lưu API key vào project.json. Chỉ dùng với video có quyền chỉnh sửa/đăng.
+
+## OCR trên video thật (6/11/2026) — 第001-005集.mp4, 9 phút 8 giây, 1882x1080 ~30fps, sub Trung 1 dòng, dải 0.825–0.905
+- Mốc so sánh: bản desktop (repo pj, RapidOCR, lấy mẫu 0,2s + tinh chỉnh mốc theo fps gốc) ra 250 câu, 0 rác. Bản này cũng sót câu thật 1 chữ (啊/不/不疼, đã xem ảnh khung hình).
+- Lỗi Windows: gọi Tesseract bằng tên cấu hình `tsv` cần file `tessdata/configs/tsv`; `setup.bat` trỏ TESSDATA_PREFIX vào thư mục chỉ có *.traineddata → Tesseract in chữ thường, TSV rỗng → **0 câu**. Sửa: `-c tessedit_create_tsv=1 -c tessedit_create_txt=0` (`_TSV`). `util.probe` (và các lệnh `text=True` khác) giải mã bằng codepage hệ thống → crash với tên file tiếng Trung; sửa bằng `encoding="utf-8"`.
+- Code cũ + Tesseract + dải đúng: 245 câu, 4 rác, sót 10 so với bản desktop. Bản 211 câu (9 rác, sót 57) nhiều khả năng do dải/dữ liệu Tesseract khác, KHÔNG chủ yếu do fps=6.
+- Sau sửa (Tesseract): 257 câu, sót 10, tìm thêm câu 1 chữ thật; rác `一`/`一一` do đổi `-`→`一` đã chặn trong `_cue_ok` (chưa chạy lại toàn video sau khi chặn).
+- RapidOCR (`engine="rapid"`, thử nghiệm): đọc 1 lần/câu ra 201 câu, sót 50 — bộ dò chữ của RapidOCR rất nhạy với cách cắt (thêm 12px lề là rỗng). Đã đổi sang đọc lần lượt 3 phiên bản ảnh (`_rapid_best`) nhưng CHƯA đo lại toàn video → mặc định vẫn là Tesseract. `detect_bands` chỉ dùng RapidOCR khi engine khác tesseract (dò cũ ra dải 0.72–1.00 trên video này → 0 câu; đã thêm cắt đệ quy dải > 8,5%).

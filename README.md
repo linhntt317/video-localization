@@ -13,6 +13,10 @@ Luồng làm việc gồm 4 bước:
 
 Cần 3 thứ ngoài Python: **ffmpeg** (bản có libass), **Tesseract OCR** và **Python 3.10+**.
 
+Tuỳ chọn (thử nghiệm): với sub **tiếng Trung / tiếng Anh** có thể dùng **RapidOCR** thay Tesseract
+(`pip install rapidocr-onnxruntime`, rồi chọn "Bộ đọc chữ: RapidOCR" trong tuỳ chọn nâng cao của bước quét).
+Mặc định vẫn là Tesseract vì RapidOCR chưa được kiểm chứng trên toàn bộ một video thật.
+
 ### Windows
 ```
 winget install Python.Python.3.12

@@ -58,7 +58,7 @@ def tesseract_langs():
     if not t:
         return []
     try:
-        out = subprocess.run([t, "--list-langs"], capture_output=True, text=True,
+        out = subprocess.run([t, "--list-langs"], capture_output=True, text=True, encoding="utf-8", errors="replace",
                              creationflags=NOWINDOW, timeout=20)
         lines = (out.stdout or out.stderr).splitlines()[1:]
         return sorted(l.strip() for l in lines if l.strip() and l.strip() != "osd")
@@ -71,7 +71,7 @@ def has_filter(name):
     if not f:
         return False
     try:
-        out = subprocess.run([f, "-hide_banner", "-filters"], capture_output=True, text=True, creationflags=NOWINDOW, timeout=20)
+        out = subprocess.run([f, "-hide_banner", "-filters"], capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=NOWINDOW, timeout=20)
         return any(l.split()[1:2] == [name] for l in out.stdout.splitlines() if len(l.split()) > 2)
     except Exception:
         return False
@@ -89,7 +89,7 @@ def probe(path):
     if not fp:
         raise RuntimeError("Không tìm thấy ffprobe (đi kèm ffmpeg).")
     out = subprocess.run([fp, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path],
-                         capture_output=True, text=True, creationflags=NOWINDOW)
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=NOWINDOW)
     if out.returncode != 0:
         raise RuntimeError("Không đọc được video: " + (out.stderr or "").strip()[:300])
     j = json.loads(out.stdout)
@@ -129,7 +129,7 @@ def probe(path):
 def run_ffmpeg(args, duration=None, cb=None, cwd=None, task=None):
     """Chạy ffmpeg, báo tiến độ 0..1 qua cb, hỗ trợ huỷ qua task.cancel."""
     cmd = [need_ffmpeg(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-progress", "pipe:1"] + args
-    p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
                          creationflags=NOWINDOW)
     err = []
 

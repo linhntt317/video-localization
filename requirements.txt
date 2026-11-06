@@ -4,3 +4,5 @@ opencv-python-headless>=4.8
 pillow>=10.0
 gdown>=5.0
 edge-tts>=6.1
+# Tuỳ chọn (thử nghiệm): bộ đọc chữ RapidOCR cho Trung/Anh, chọn ở "Bộ đọc chữ" khi quét
+# rapidocr-onnxruntime
