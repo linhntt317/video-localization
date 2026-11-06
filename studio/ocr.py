@@ -671,10 +671,16 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
     ncpu = max(1, min(8, os.cpu_count() or 2))
     jobs = []          # (band_index, [ảnh các phiên bản]) — ảnh được bỏ ngay khi đọc xong cho nhẹ bộ nhớ
     job_key = []       # mặt nạ thu nhỏ lúc tạo job (tham chiếu để tinh chỉnh mốc thời gian)
+    job_prev = []      # job đọc lại (cùng câu) -> job trước đó; đọc lại ra rỗng thì dùng kết quả cũ, không cắt đôi câu
     frames = []        # mỗi khung: [chỉ số job hoặc None cho từng dòng]
     last_key = [None] * nb
     last_job = [None] * nb
     job_px = [0.0] * nb  # lượng điểm chữ lúc tạo job đang dùng của từng dòng
+    # RapidOCR đọc 1 lần/job và hay trả rỗng ở khung chữ đang hiện dần -> cả câu dùng lại kết quả rỗng đó và mất câu.
+    # Như bản desktop: câu còn hiện thì đọc lại sau ~0,5s (tối đa 2 lần/câu cho đỡ chậm) (gom câu lấy chữ xuất hiện nhiều nhất).
+    recheck = max(2, int(round(0.5 * fps)))
+    job_age = [0] * nb
+    job_reads = [0] * nb
     res = {}           # job -> (chữ, tin cậy)
     lock = threading.Lock()
     prog = {"done": 0}
@@ -747,9 +753,14 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
                         ks = float(key.sum())
                         # cùng câu (hình chữ gần như không đổi) -> dùng lại chữ đã đọc; NHƯNG nếu chữ đậm/đủ hơn hẳn lúc
                         # đọc (đang hiện dần: lần đọc đầu thiếu chữ, vd '是热的我是活' thiếu '人') thì đọc lại
-                        if _key_diff(last_key[bi], key) < 0.35 and ks <= 1.2 * job_px[bi]:
+                        same = _key_diff(last_key[bi], key) < 0.35 and ks <= 1.2 * job_px[bi]
+                        again = same and use[bi] == "rapid" and job_age[bi] >= recheck and job_reads[bi] < 2
+                        if same and not again:
                             row.append(last_job[bi])
+                            job_age[bi] += 1
                         else:
+                            job_reads[bi] = job_reads[bi] + 1 if again else 1
+                            job_age[bi] = 1
                             if use[bi] == "rapid":
                                 pngs = _rapid_pngs(sub, mask)
                             else:
@@ -762,6 +773,7 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
                             with lock:
                                 jobs.append((bi, pngs))
                                 job_key.append(key if bi == primary else None)
+                                job_prev.append(last_job[bi] if again else None)
                                 last_job[bi] = len(jobs) - 1
                             job_px[bi] = ks
                             backlog.append(last_job[bi])
@@ -808,15 +820,20 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
     results = [res.get(j, ("", 0.0)) for j in range(len(jobs))]
     cleaned = {}
 
-    def text_at(fi, bi):
-        j = frames[fi][bi]
-        if j is None or results[j] is None:
-            return "", 0.0
+    def read_job(j, bi):
         if j not in cleaned:
             t, c = results[j]
             t = _clean_lang(t, bands[bi]["lang"])
             cleaned[j] = (t, c) if (c >= min_conf and len(_norm(t)) >= 1) else ("", 0.0)
+            if not cleaned[j][0] and job_prev[j] is not None:  # đọc lại ra rỗng -> giữ chữ của lần đọc trước
+                cleaned[j] = read_job(job_prev[j], bi)
         return cleaned[j]
+
+    def text_at(fi, bi):
+        j = frames[fi][bi]
+        if j is None or results[j] is None:
+            return "", 0.0
+        return read_job(j, bi)
 
     if debug is not None:
         for fi in range(len(frames)):
