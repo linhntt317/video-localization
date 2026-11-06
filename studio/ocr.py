@@ -499,6 +499,18 @@ def _clean_lang(t, lang):
     return _clean_cjk(_clean(t))
 
 
+def _looks_like_text(mask):
+    """Mặt nạ có nét cao cỡ chữ không (mảng liền cao >= 25% dải, tổng diện tích >= 0,035·h²)?
+    Nền sáng/nhiễu hay lọt mặt nạ nhưng toàn đốm thấp; RapidOCR đọc mỗi ảnh như vậy cả 3 phiên bản (đo trên video
+    thật: 62% lượt đọc là rỗng). Câu 1 chữ mảnh nhất đo được (不) ~0,058·h²."""
+    h = mask.shape[0]
+    n, _, st, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if n <= 1:
+        return False
+    tall = st[1:, cv2.CC_STAT_HEIGHT] >= 0.25 * h
+    return bool(tall.any()) and float(st[1:, cv2.CC_STAT_AREA][tall].sum()) >= 0.035 * h * h
+
+
 def _key_diff(a, b):
     """Độ khác nhau giữa 2 mặt nạ chữ đã thu nhỏ (0 = giống hệt). Dùng để biết sub đổi câu hay chưa."""
     if a is None or b is None or a.shape != b.shape:
@@ -695,7 +707,7 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
                 continue
             sub = img[a - ymin: z - ymin]
             mask, soft = _text_mask(sub, thr)
-            if mask.sum() < mask.size * 0.002:
+            if mask.sum() < mask.size * 0.002 or (use[bi] == "rapid" and not _looks_like_text(mask)):
                 out.append(False)
                 continue
             out.append((mask, soft, _mask_key(mask, W), sub))
