@@ -952,7 +952,8 @@ def plausible(text, lang):
         cjk = len(re.findall(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]", core))
         return cjk >= max(1, int(0.6 * len(chars)))
     letters = sum(ch.isalpha() for ch in core)
-    if letters < 2 or letters / max(1, len(core)) < 0.7:
+    body = re.sub(r"[.,!?'\"\u2019\u201c\u201d:;\u2026\-]", "", core)  # dấu câu thường gặp không phải rác ('Go!' = 2/3 chữ cái)
+    if letters < 2 or letters / max(1, len(body)) < 0.7:
         return False
     words = re.findall(r"[^\W\d_]+", t)
     good = [w for w in words if (len(w) >= 2 and re.search(r"[aeiouyàáâãèéêìíòóôõùúýăđơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữự]", w.lower())) or w.lower() in ("i", "a")]
