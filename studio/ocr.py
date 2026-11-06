@@ -280,19 +280,35 @@ def detect_bands(video, info, samples=20, engine="tesseract"):
         height_frac = (b - a) / sc / H
         if height_frac < 0.012:
             continue
-        pieces, todo = [], [(a, b)]
-        while todo:  # có thể là nhiều dòng dính nhau (hoặc dính nền sáng): cắt ở chỗ ít chữ nhất tới khi đủ thấp
+        # Nền nhiễu hay làm cả nửa dưới thành 1 run dài; dòng sub thật là đỉnh mật độ chữ rõ rệt.
+        # Chỉ giữ các đoạn có mật độ >= 30% đỉnh của run (gộp khe <= 3 hàng).
+        floor = 0.3 * float(pix[a:b + 1].max())
+        cores, s0, last = [], None, None
+        for r in range(a, b + 1):
+            if pix[r] >= floor and pix[r] > 0:
+                if s0 is not None and r - last > 3:
+                    cores.append((s0, last))
+                    s0 = None
+                if s0 is None:
+                    s0 = r
+                last = r
+        if s0 is not None:
+            cores.append((s0, last))
+        pieces, todo = [], list(cores)
+        while todo:  # nhiều dòng dính nhau: chỉ tách khi giữa có khe thật (thấp hơn nửa đỉnh hai bên)
             x, y = todo.pop()
             if (y - x) / sc / H > 0.085 and len(pieces) + len(todo) < 6:
                 lo, hi = x + int((y - x) * 0.3), x + int((y - x) * 0.7)
                 cut = lo + int(np.argmin(pix[lo:hi + 1]))
-                todo += [(x, cut), (cut, y)]
-            elif (y - x) / sc / H >= 0.012:
+                if pix[cut] < 0.5 * min(pix[x:cut + 1].max(), pix[cut:y + 1].max()):
+                    todo += [(x, cut), (cut, y)]
+                    continue
+            if (y - x) / sc / H >= 0.012:
                 pieces.append((x, y))
         for x, y in pieces:
             lines.append({
-                "y0": round(max(0.0, (y_start + x / sc) / H - 0.006), 4),
-                "y1": round(min(1.0, (y_start + y / sc) / H + 0.006), 4),
+                "y0": round(max(0.0, (y_start + x / sc) / H - 0.012), 4),
+                "y1": round(min(1.0, (y_start + y / sc) / H + 0.012), 4),
                 "score": round(float(freq[x:y + 1].mean()), 3),
             })
     lines.sort(key=lambda l: -l["score"])
