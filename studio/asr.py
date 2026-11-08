@@ -48,6 +48,14 @@ def _extract_audio(video, wav):
         raise RuntimeError("Không lấy được âm thanh từ video (video có thể không có tiếng).")
 
 
+def _read_wav(path):
+    import wave
+    import numpy as np
+    with wave.open(path, "rb") as w:
+        raw = w.readframes(w.getnframes())
+    return np.frombuffer(raw, np.int16).astype(np.float32) / 32768.0
+
+
 def transcribe(video, duration, model="small", lang=None, task=None, cb=None):
     """Trả về (danh sách {start,end,text}, ngôn ngữ nhận ra)."""
     if not available() and LOADER is _load:
@@ -61,7 +69,10 @@ def transcribe(video, duration, model="small", lang=None, task=None, cb=None):
         if cb:
             cb(0.02, f"Đang nạp mô hình {model} (lần đầu phải tải về, có thể mất vài phút)")
         m = LOADER(model, device())
-        segs, info = m.transcribe(wav, language=(lang or None), vad_filter=True,
+        # Tự đọc wav thành mảng số rồi đưa cho Whisper: faster-whisper mới gọi av.open(..., metadata_errors=...) và lỗi
+        # "open() got an unexpected keyword argument 'metadata_errors'" khi bản PyAV trên máy cũ (Colab) -> bỏ qua bước giải mã đó.
+        audio = _read_wav(wav)
+        segs, info = m.transcribe(audio, language=(lang or None), vad_filter=True,
                                   vad_parameters={"min_silence_duration_ms": 300}, beam_size=5,
                                   condition_on_previous_text=False)
         out = []

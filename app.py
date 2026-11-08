@@ -326,7 +326,7 @@ def _project_dict(pid, name, path, info):
         {"name": "Dòng 2", "y0": 0.935, "y1": 0.995, "lang": "eng"},
     ]
     return {"id": pid, "name": os.path.splitext(name)[0], "video": path, "info": info, "bands": d_bands, "primary": 1,
-            "ocr": {"fps": 6, "t0": 0, "t1": None, "thr": 210, "min_conf": 40, "engine": "auto", "refine": True},
+            "ocr": {"fps": 6, "t0": 0, "t1": None, "thr": 210, "min_conf": 40, "engine": "tesseract", "refine": True},
             "cues": [], "settings": {},
             "translate": {"model": translate.DEFAULT_MODEL, "rules": translate.DEFAULT_RULES, "glossary": ""}}
 
@@ -500,7 +500,7 @@ def frame(pid):
 def detect(pid):
     p = load(pid)
     try:
-        lines = ocr.detect_bands(p["video"], p["info"], engine=(p.get("ocr") or {}).get("engine", "auto"))
+        lines = ocr.detect_bands(p["video"], p["info"], engine=(p.get("ocr") or {}).get("engine", "tesseract"))
     except Exception as e:  # noqa
         return err(str(e), 500)
     return jsonify({"lines": lines})
@@ -532,7 +532,7 @@ def deep_ranges(p, ranges, task, p0, p1, pad=0.4):
     thr = int(o.get("thr", 210))
     for i, (a, b) in enumerate(ranges):
         got = ocr.deep_scan(p["video"], p["info"], p["bands"], p.get("primary", 0), a, b, thr=thr, task=task,
-                            engine=o.get("engine", "auto"),
+                            engine=o.get("engine", "tesseract"),
                             cb=(lambda pr, i=i: task.set(p0 + (p1 - p0) * (i + pr) / len(ranges), f"Quét kỹ đoạn nghi sót {i + 1}/{len(ranges)}")))
         ca, cb_ = a + pad, max(a + pad + 0.2, b - pad)  # lõi của đoạn (bỏ phần đệm hai đầu, dễ dính câu của đoạn bên cạnh)
         found += [c for c in got if min(c["end"], cb_) - max(c["start"], ca) >= min(0.25, 0.5 * (cb_ - ca))]
@@ -562,7 +562,7 @@ def run_ocr(pid):
                            t0=float(o.get("t0") or 0), t1=(float(o["t1"]) if o.get("t1") else None),
                            thr=int(o.get("thr", 210)), min_conf=_mc(o),
                            seg_min=float(o.get("seg_min", 55)), ref=bool(o.get("ref", True)),
-                           engine=o.get("engine", "auto"), refine=bool(o.get("refine", True)),
+                           engine=o.get("engine", "tesseract"), refine=bool(o.get("refine", True)),
                            task=task, cb=lambda pr, msg: task.set(pr * sc, msg))
         q = load(pid)
         q["cues"] = cues
@@ -613,7 +613,7 @@ def probe_ocr(pid):
     try:
         res = ocr.probe_frame(p["video"], p["info"], p["bands"], p.get("primary", 0), float(body.get("t", 0)),
                               thr=int(o.get("thr", 210)), min_conf=_mc(o), seg_min=float(o.get("seg_min", 55)),
-                              engine=o.get("engine", "auto"))
+                              engine=o.get("engine", "tesseract"))
     except Exception as e:  # noqa
         return err(str(e), 500)
     return jsonify({"bands": res, "min_conf": _mc(o), "seg_min": float(o.get("seg_min", 55))})
@@ -664,7 +664,7 @@ def run_rescan(pid):
             found += ocr.run_ocr(p["video"], p["info"], p["bands"], p.get("primary", 0), fps=max(6.0, float(o.get("fps", 6))),
                                  t0=a, t1=b, thr=int(body.get("thr", o.get("thr", 210))),
                                  min_conf=float(body.get("min_conf", 40)), seg_min=float(body.get("seg_min", 55)),
-                                 ref=bool(o.get("ref", True)), engine=o.get("engine", "auto"),
+                                 ref=bool(o.get("ref", True)), engine=o.get("engine", "tesseract"),
                                  refine=bool(o.get("refine", True)), task=task,
                                  cb=(lambda pr, msg, i=i: task.set((i + pr) / len(rs), f"Đoạn {i + 1}/{len(rs)}: {msg}")))
         q = load(pid)

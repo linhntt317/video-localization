@@ -320,7 +320,7 @@ function enter2() {
   if (!S.t2) S.t2 = Math.min(p.info.duration * 0.3, p.info.duration);
   sl.value = S.t2; $('#tOut').textContent = fmt(S.t2);
   $('#o_fps').value = o.fps; $('#o_t0').value = o.t0 || ''; $('#o_t1').value = o.t1 || ''; $('#o_thr').value = o.thr; $('#o_seg').value = o.seg_min ?? 55; $('#o_ref').checked = o.ref !== false;
-  $('#o_engine').value = o.engine || 'auto'; $('#o_refine').checked = o.refine !== false; initOcrAsr();
+  $('#o_engine').value = o.engine || 'tesseract'; $('#o_refine').checked = o.refine !== false; initOcrAsr();
   renderBands(); showFrame2();
 }
 const showFrame2 = debounce(() => loadImg($('#frame'), $('#skel'), frameUrl(S.t2)), 120);
