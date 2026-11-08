@@ -314,7 +314,7 @@ def list_projects():
                 p = json.load(open(f, encoding="utf-8"))
                 out.append({"id": p["id"], "name": p["name"], "info": p["info"], "cues": len(p.get("cues", [])),
                             "translated": sum(1 for c in p.get("cues", []) if (c.get("vi") or "").strip()),
-                            "has_final": os.path.isfile(os.path.join(PROJ_DIR, d, "final.mp4"))})
+                            "has_final": os.path.isfile(os.path.join(PROJ_DIR, d, "final.mp4")), "mode": p.get("mode")})
             except Exception:
                 pass
     return jsonify(out)
@@ -474,7 +474,7 @@ def delete_project(pid):
 def save_project(pid):
     p = load(pid)
     body = request.get_json(force=True)
-    for k in ("name", "bands", "primary", "ocr", "cues", "settings", "translate", "dub"):
+    for k in ("name", "mode", "bands", "primary", "ocr", "cues", "settings", "translate", "dub"):
         if k in body:
             p[k] = body[k]
     save(p)
@@ -814,15 +814,16 @@ def run_render(pid):
     if "settings" in body:
         p["settings"] = body["settings"]
     save(p)
-    if not any((c.get("vi") or "").strip() for c in p["cues"]):
-        return err("Chưa có bản dịch nào. Hãy dịch hoặc nhập SRT tiếng Việt trước.")
+    if render.merged(p["settings"])["sub"].get("enabled", True) and not any((c.get("vi") or "").strip() for c in p["cues"]):
+        return err("Chưa có bản dịch nào. Hãy dịch hoặc nhập SRT tiếng Việt trước (hoặc tắt \"Ghép phụ đề Việt\" nếu chỉ gắn logo/watermark).")
 
     def work(task):
         q = load(pid)
         out = render.render_final(q["video"], q["info"], q["cues"], q["settings"], pdir(pid),
                                   task=task, cb=task.set)
-        open(os.path.join(pdir(pid), "subs_vi.srt"), "w", encoding="utf-8").write(srt.dump(q["cues"], "vi"))
-        open(os.path.join(pdir(pid), "subs_src.srt"), "w", encoding="utf-8").write(srt.dump(q["cues"], "src"))
+        if q["cues"]:  # chế độ chỉ gắn logo/watermark không có câu nào
+            open(os.path.join(pdir(pid), "subs_vi.srt"), "w", encoding="utf-8").write(srt.dump(q["cues"], "vi"))
+            open(os.path.join(pdir(pid), "subs_src.srt"), "w", encoding="utf-8").write(srt.dump(q["cues"], "src"))
         task.result = {"file": os.path.basename(out), "size": os.path.getsize(out)}
         if EXPORT_DIR:
             task.result["export"] = export_copy(q, pdir(pid), out, task)

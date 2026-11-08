@@ -12,12 +12,12 @@ from . import tts, util
 from .util import Cancelled
 
 DEFAULTS = {
-    "old": {"y0": 0.862, "fade": 0.07, "blur": 1.0},
+    "old": {"enabled": True, "y0": 0.862, "fade": 0.07, "blur": 1.0},
     "logo": {"enabled": True, "pos": "tr", "width": 0.0885, "opacity": 1.0, "margin": 0.0175, "file": "logo.png"},
     "corner": {"enabled": True, "text": "ĐẬU XANH STUDIO", "pos": "tl", "size": 0.0556, "opacity": 0.5,
                "serif": True, "margin": 0.0175},
     "fly": {"enabled": True, "text": "ĐẬU XANH STUDIO", "size": 0.05, "opacity": 0.3, "speed": 1.0, "serif": True},
-    "sub": {"font": "DejaVu Sans", "size": 0.048, "outline": 3.2, "shadow": 1.2, "margin_v": 0.044,
+    "sub": {"enabled": True, "font": "DejaVu Sans", "size": 0.048, "outline": 3.2, "shadow": 1.2, "margin_v": 0.044,
             "margin_h": 0.083, "color": "#FFFFFF", "outline_color": "#000000"},
     "export": {"quality": "balanced", "resolution": "source", "audio_kbps": 192},
     "dub": {"enabled": False, "orig": "duck", "vol": 1.0, "orig_vol": 0.3, "max_speed": 1.35},
@@ -36,6 +36,16 @@ def merged(user):
         if isinstance(v, dict) and k in cfg:
             cfg[k].update(v)
     return cfg
+
+
+def use_old(cfg):
+    """Có xoá sub cũ bằng làm nhoè không (tắt khi chỉ gắn logo/watermark)."""
+    return bool(cfg["old"].get("enabled", True))
+
+
+def use_sub(cfg, cues):
+    """Có ghép phụ đề Việt không: bật trong cài đặt và có ít nhất một câu đã dịch."""
+    return bool(cfg["sub"].get("enabled", True)) and any((c.get("vi") or "").strip() for c in cues)
 
 
 def list_fonts():
@@ -283,15 +293,19 @@ def prepare_assets(jobdir, cfg, info, project_dir):
     return assets
 
 
-def build_graph(cfg, info, assets, strip_idx, mask_idx, idx_map, enable_expr, t_off=0.0):
-    """Trả về chuỗi filter_complex. idx_map: {'logo': i, 'corner': i, 'fly': i} chỉ mục input."""
+def build_graph(cfg, info, assets, strip_idx, mask_idx, idx_map, enable_expr, t_off=0.0, with_sub=True):
+    """Trả về chuỗi filter_complex. idx_map: {'logo': i, 'corner': i, 'fly': i} chỉ mục input.
+    strip_idx=None: không xoá sub cũ (không có input dải/mặt nạ). with_sub=False: không ghép phụ đề."""
     W, H, top, sh = geometry(cfg, info)
     fps = info["fps_str"]
-    L = [f"[0:v]fps={fps}[b0]",
-         f"[{strip_idx}:v]format=yuv420p[strip]",
-         f"[{mask_idx}:v]format=gray[mask]",
-         "[strip][mask]alphamerge[stripa]",
-         f"[b0][stripa]overlay=0:{top}:enable='{enable_expr}'[v1]"]
+    L = [f"[0:v]fps={fps}[b0]"]
+    if strip_idx is None:
+        L.append("[b0]null[v1]")
+    else:
+        L += [f"[{strip_idx}:v]format=yuv420p[strip]",
+              f"[{mask_idx}:v]format=gray[mask]",
+              "[strip][mask]alphamerge[stripa]",
+              f"[b0][stripa]overlay=0:{top}:enable='{enable_expr}'[v1]"]
     cur = "v1"
     k = 1
     if "logo" in idx_map:
@@ -321,9 +335,10 @@ def build_graph(cfg, info, assets, strip_idx, mask_idx, idx_map, enable_expr, t_
         L.append(f"[{cur}][wf]overlay=x='(W-w)*(0.5+0.5*sin(2*PI*{tt}/{24 / sp:.3f}))':"
                  f"y='{ymin}+({ymax}-{ymin}-h)*(0.5+0.5*sin(2*PI*{tt}/{17 / sp:.3f}+1.2))'[v{k}]")
         cur = f"v{k}"
-    k += 1
-    L.append(f"[{cur}]ass=sub.ass:fontsdir=fonts[v{k}]")
-    cur = f"v{k}"
+    if with_sub:
+        k += 1
+        L.append(f"[{cur}]ass=sub.ass:fontsdir=fonts[v{k}]")
+        cur = f"v{k}"
     res = cfg["export"]["resolution"]
     tail = "format=yuv420p"
     if res in ("1080", "720") and H != int(res):
@@ -356,18 +371,24 @@ def render_final(video, info, cues, user_cfg, project_dir, out_name="final.mp4",
         if not placed:
             raise RuntimeError("Đã bật lồng tiếng nhưng chưa có giọng nào. Hãy tạo giọng ở bước 3 (nút Lồng tiếng) trước khi xuất.")
 
-    cb(0.01, "Xoá sub cũ và làm nhoè nền")
-    build_strip(video, info, cues, cfg, os.path.join(job, "strip.mp4"), task=task,
-                cb=lambda p: cb(0.01 + 0.39 * p, "Xoá sub cũ và làm nhoè nền"))
-    make_mask(os.path.join(job, "mask.png"), W, sh, cfg["old"]["fade"] * H)
+    old_on, sub_on = use_old(cfg), use_sub(cfg, cues)
+    if old_on:
+        cb(0.01, "Xoá sub cũ và làm nhoè nền")
+        build_strip(video, info, cues, cfg, os.path.join(job, "strip.mp4"), task=task,
+                    cb=lambda p: cb(0.01 + 0.39 * p, "Xoá sub cũ và làm nhoè nền"))
+        make_mask(os.path.join(job, "mask.png"), W, sh, cfg["old"]["fade"] * H)
     assets = prepare_assets(job, cfg, info, project_dir)
-    write_ass(os.path.join(job, "sub.ass"), cues, cfg, info)
+    if sub_on:
+        write_ass(os.path.join(job, "sub.ass"), cues, cfg, info)
 
     iv = intervals(cues)
     enable = "+".join(f"between(t,{a:.2f},{b:.2f})" for a, b in iv) or "0"
-    inputs = ["-i", video, "-i", "strip.mp4", "-loop", "1", "-framerate", info["fps_str"], "-i", "mask.png"]
+    if old_on:
+        inputs = ["-i", video, "-i", "strip.mp4", "-loop", "1", "-framerate", info["fps_str"], "-i", "mask.png"]
+        nxt = 3
+    else:
+        inputs, nxt = ["-i", video], 1
     idx_map = {}
-    nxt = 3
     for name in ("logo", "corner", "fly"):
         if name in assets:
             inputs += ["-loop", "1", "-i", f"ov_{name}.png"]
@@ -378,7 +399,7 @@ def render_final(video, info, cues, user_cfg, project_dir, out_name="final.mp4",
         inputs += ["-i", os.path.abspath(dub_wav)]
         dub_idx = nxt
         nxt += 1
-    graph = build_graph(cfg, info, assets, 1, 2, idx_map, enable)
+    graph = build_graph(cfg, info, assets, 1 if old_on else None, 2, idx_map, enable, with_sub=sub_on)
     if dub_idx is not None:
         mode, ov = cfg["dub"]["orig"], float(cfg["dub"]["orig_vol"])
         d = f"[{dub_idx}:a]aresample=48000,aformat=channel_layouts=stereo"
@@ -411,9 +432,10 @@ def render_final(video, info, cues, user_cfg, project_dir, out_name="final.mp4",
         args += ["-c:a", "aac", "-b:a", f"{int(cfg['export']['audio_kbps'])}k", "-ar", "48000", "-ac", "2"]
     out_abs = os.path.abspath(os.path.join(project_dir, out_name))
     args += [out_abs]
-    cb(0.4, "Ghép logo, watermark, phụ đề và xuất video")
+    base = 0.4 if old_on else 0.02
+    cb(base, "Ghép logo, watermark, phụ đề và xuất video" if sub_on else "Ghép logo, watermark và xuất video")
     util.run_ffmpeg(args, duration=info["duration"], cwd=job, task=task,
-                    cb=lambda p: cb(0.4 + 0.6 * p, "Ghép logo, watermark, phụ đề và xuất video"))
+                    cb=lambda p: cb(base + (1 - base) * p, "Ghép logo, watermark, phụ đề và xuất video" if sub_on else "Ghép logo, watermark và xuất video"))
     cb(1.0, "Hoàn tất")
     return out_abs
 
@@ -426,25 +448,32 @@ def render_preview(video, info, cues, user_cfg, project_dir, t, width=1280):
     W, H, top, sh = geometry(cfg, info)
     cmd = [util.need_ffmpeg(), "-v", "error", "-nostdin", "-ss", f"{t:.3f}", "-i", video, "-frames:v", "1",
            "-vf", f"crop={W}:{sh}:0:{top}", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
-    raw = subprocess.run(cmd, capture_output=True, creationflags=util.NOWINDOW).stdout
-    if len(raw) < W * sh * 3:
-        raise RuntimeError("Không lấy được khung hình để xem thử.")
-    img = np.frombuffer(raw[:W * sh * 3], np.uint8).reshape(sh, W, 3)
-    active = any(c["start"] - 0.12 <= t <= c["end"] + 0.12 for c in cues)
-    if active:
-        img = Cleaner(W, sh, H / 1080.0, cfg["old"]["blur"])(np.ascontiguousarray(img))
-    cv2.imwrite(os.path.join(job, "strip.png"), img)
-    make_mask(os.path.join(job, "mask.png"), W, sh, cfg["old"]["fade"] * H)
+    old_on, sub_on = use_old(cfg), use_sub(cfg, cues)
+    if old_on:
+        raw = subprocess.run(cmd, capture_output=True, creationflags=util.NOWINDOW).stdout
+        if len(raw) < W * sh * 3:
+            raise RuntimeError("Không lấy được khung hình để xem thử.")
+        img = np.frombuffer(raw[:W * sh * 3], np.uint8).reshape(sh, W, 3)
+        active = any(c["start"] - 0.12 <= t <= c["end"] + 0.12 for c in cues)
+        if active:
+            img = Cleaner(W, sh, H / 1080.0, cfg["old"]["blur"])(np.ascontiguousarray(img))
+        cv2.imwrite(os.path.join(job, "strip.png"), img)
+        make_mask(os.path.join(job, "mask.png"), W, sh, cfg["old"]["fade"] * H)
     assets = prepare_assets(job, cfg, info, project_dir)
-    write_ass(os.path.join(job, "sub.ass"), cues, cfg, info, only_at=t)
-    inputs = ["-ss", f"{t:.3f}", "-i", video, "-loop", "1", "-i", "strip.png", "-loop", "1", "-i", "mask.png"]
-    idx_map, nxt = {}, 3
+    if sub_on:
+        write_ass(os.path.join(job, "sub.ass"), cues, cfg, info, only_at=t)
+    if old_on:
+        inputs = ["-ss", f"{t:.3f}", "-i", video, "-loop", "1", "-i", "strip.png", "-loop", "1", "-i", "mask.png"]
+        idx_map, nxt = {}, 3
+    else:
+        inputs = ["-ss", f"{t:.3f}", "-i", video]
+        idx_map, nxt = {}, 1
     for name in ("logo", "corner", "fly"):
         if name in assets:
             inputs += ["-loop", "1", "-i", f"ov_{name}.png"]
             idx_map[name] = nxt
             nxt += 1
-    graph = build_graph(cfg, info, assets, 1, 2, idx_map, "1", t_off=t)
+    graph = build_graph(cfg, info, assets, 1 if old_on else None, 2, idx_map, "1", t_off=t, with_sub=sub_on)
     with open(os.path.join(job, "graph.txt"), "w", encoding="utf-8") as f:
         f.write(graph)
     out = os.path.join(project_dir, "preview.jpg")

@@ -94,7 +94,7 @@ function deepSet(o, path, v) { const ks = path.split('.'); const l = ks.pop(); c
 function save(now = false) {
   if (!S.p) return;
   clearTimeout(S.saveT);
-  const go = () => api(`/api/p/${S.p.id}/save`, { json: { name: S.p.name, bands: S.p.bands, primary: S.p.primary, ocr: S.p.ocr, cues: S.p.cues, settings: S.p.settings, translate: S.p.translate, dub: S.p.dub } }).catch(e => toast('Lưu lỗi: ' + e.message, true));
+  const go = () => api(`/api/p/${S.p.id}/save`, { json: { name: S.p.name, mode: S.p.mode, bands: S.p.bands, primary: S.p.primary, ocr: S.p.ocr, cues: S.p.cues, settings: S.p.settings, translate: S.p.translate, dub: S.p.dub } }).catch(e => toast('Lưu lỗi: ' + e.message, true));
   if (now) return go();
   S.saveT = setTimeout(go, 500);
 }
@@ -122,6 +122,7 @@ function updateStepper() {
     b.classList.toggle('on', n === S.step);
     b.classList.toggle('done', !!S.p && n < S.step);
     b.disabled = n > 1 && !S.p;
+    b.hidden = isBrand() && (n === 2 || n === 3);  // chế độ chỉ logo/watermark: ẩn bước quét và phụ đề
   });
   const on = btns.find(b => +b.dataset.step === S.step), pill = $('#pill');
   if (on) { pill.style.left = on.offsetLeft + 'px'; pill.style.width = on.offsetWidth + 'px'; }
@@ -203,9 +204,19 @@ $('#mediaRefresh').onclick = () => loadMedia(true);
 $('#mediaList').addEventListener('click', async e => {
   const c = e.target.closest('[data-media]'); if (!c || c.classList.contains('busy')) return;
   c.classList.add('busy');
-  try { S.p = await api('/api/projects', { json: { media: c.dataset.media } }); S.maxStep = 2; toast('Đã tạo dự án'); setStep(2); }
+  try { S.p = await api('/api/projects', { json: { media: c.dataset.media } }); await created(); }
   catch (err) { toast(err.message, true); } finally { c.classList.remove('busy'); }
 });
+/* sau khi tạo dự án: nếu tick "Chỉ gắn logo/watermark" thì bỏ qua bước quét/dịch, vào thẳng bước 4 */
+async function created() {
+  if ($('#brandOnly').checked) {
+    S.p.mode = 'brand';
+    S.p.settings = { old: { enabled: false }, sub: { enabled: false } };
+    try { await save(true); } catch (e) { }
+    S.maxStep = 4; toast('Đã tạo dự án (chỉ gắn logo/watermark)'); setStep(4);
+  } else { S.maxStep = 2; toast('Đã tạo dự án'); setStep(2); }
+}
+const isBrand = () => S.p?.mode === 'brand';
 async function loadProjects() {
   loadMedia();
   const list = await api('/api/projects').catch(() => []);
@@ -213,9 +224,9 @@ async function loadProjects() {
   if (!list.length) { box.innerHTML = '<div class="empty">Chưa có dự án nào.<br>Hãy chọn video ở bên cạnh để bắt đầu.</div>'; return; }
   box.innerHTML = list.map((p, i) => `
     <div class="proj" data-id="${p.id}" style="--i:${i}">
-      <b>${esc(p.name)}${p.has_final ? '<span class="badge">đã xuất</span>' : ''}</b>
+      <b>${esc(p.name)}${p.mode === 'brand' ? '<span class="badge">logo/watermark</span>' : ''}${p.has_final ? '<span class="badge">đã xuất</span>' : ''}</b>
       <button class="del" title="Xoá dự án" data-del="${p.id}">×</button>
-      <small>${p.info.width}x${p.info.height} · ${dur(p.info.duration)} · ${p.cues} câu · ${p.translated} đã dịch</small>
+      <small>${p.info.width}x${p.info.height} · ${dur(p.info.duration)}${p.mode === 'brand' ? '' : ` · ${p.cues} câu · ${p.translated} đã dịch`}</small>
     </div>`).join('');
 }
 $('#projects').addEventListener('click', async e => {
@@ -232,7 +243,7 @@ $('#projects').addEventListener('click', async e => {
 async function openProject(id) {
   S.p = await api('/api/p/' + id);
   if (S.p._video_error) toast(S.p._video_error, true);
-  S.maxStep = S.p.cues.length ? 3 : 2;
+  S.maxStep = isBrand() ? 4 : S.p.cues.length ? 3 : 2;
   S.cur = 0;
   /* nếu đang có tác vụ chạy nền (vd. điện thoại khoá màn hình lúc đang quét/xuất) thì nối lại thanh tiến độ */
   const t = await api(`/api/p/${id}/task`).catch(() => null);
@@ -242,7 +253,7 @@ async function openProject(id) {
     setTimeout(() => runTask($(R[1]), R[2], $(R[3])), 300);
     return;
   }
-  setStep(S.p.cues.length ? 3 : 2);
+  setStep(isBrand() ? 4 : S.p.cues.length ? 3 : 2);
 }
 /* tải video về máy xử lý từ link: hợp với video lớn vì không phải đi qua trình duyệt điện thoại */
 let urlPoll = null;
@@ -262,7 +273,7 @@ $('#urlBtn').onclick = async () => {
     if (t.state === 'running') return;
     clearInterval(urlPoll); $('#urlBtn').disabled = false; root.hidden = true;
     if (t.state === 'error') return toast(t.error || 'Tải lỗi', true);
-    if (t.state === 'done' && t.pid) { S.p = await api('/api/p/' + t.pid); S.maxStep = 2; $('#urlIn').value = ''; toast('Đã tạo dự án'); setStep(2); }
+    if (t.state === 'done' && t.pid) { S.p = await api('/api/p/' + t.pid); $('#urlIn').value = ''; await created(); }
   };
   urlPoll = setInterval(tick, 1000); tick();
 };
@@ -280,7 +291,7 @@ function upload(file) {
     $('#upbar').hidden = true;
     let j = {}; try { j = JSON.parse(xhr.responseText); } catch (e) { }
     if (xhr.status !== 200) return toast(j.error || 'Tải lên lỗi', true);
-    S.p = j; S.maxStep = 2; toast('Đã tạo dự án'); setStep(2);
+    S.p = j; created();
   };
   xhr.onerror = () => { $('#upbar').hidden = true; toast('Tải lên lỗi', true); };
   xhr.open('POST', U('/api/projects')); xhr.send(fd);
@@ -288,7 +299,7 @@ function upload(file) {
 $('#pathBtn').onclick = async () => {
   const path = $('#pathIn').value.trim(); if (!path) return toast('Hãy dán đường dẫn video', true);
   const b = $('#pathBtn'); b.disabled = true;
-  try { S.p = await api('/api/projects', { json: { path } }); S.maxStep = 2; toast('Đã tạo dự án'); setStep(2); }
+  try { S.p = await api('/api/projects', { json: { path } }); await created(); }
   catch (e) { toast(e.message, true); } finally { b.disabled = false; }
 };
 
@@ -794,6 +805,7 @@ $('#dlgImp').addEventListener('close', async () => {
 /* ---------------------------------------------------------------- bước 4 */
 const SCHEMA = [
   ['Xoá sub cũ', true, [
+    ['old.enabled', 'toggle', 'Xoá sub cũ bằng làm nhoè'],
     ['old.y0', 'range', 'Sub cũ bắt đầu từ (% chiều cao)', { min: 50, max: 98, step: .2, mul: 100 }],
     ['old.fade', 'range', 'Độ mờ dần phía trên (%)', { min: 0, max: 15, step: .2, mul: 100 }],
     ['old.blur', 'range', 'Độ nhoè', { min: .3, max: 3, step: .1 }],
@@ -822,6 +834,7 @@ const SCHEMA = [
     ['fly.serif', 'toggle', 'Font có chân'],
   ]],
   ['Phụ đề tiếng Việt', false, [
+    ['sub.enabled', 'toggle', 'Ghép phụ đề Việt vào video'],
     ['sub.font', 'select', 'Font', { fonts: true }],
     ['sub.size', 'range', 'Cỡ chữ (% chiều cao)', { min: 2.5, max: 9, step: .1, mul: 100 }],
     ['sub.outline', 'range', 'Độ dày viền', { min: 0, max: 8, step: .2 }],
@@ -848,7 +861,8 @@ function cfg() {
 }
 function buildSettings() {
   const c = cfg();
-  $('#settingsCard').innerHTML = '<h2>Hiệu ứng và phụ đề</h2>' + SCHEMA.map(([title, open, fields], gi) => `
+  const groups = isBrand() ? SCHEMA.filter(g => !['Xoá sub cũ', 'Phụ đề tiếng Việt', 'Lồng tiếng'].includes(g[0])).map(g => ['Logo', 'Chữ watermark ở góc', 'Chữ watermark bay vòng'].includes(g[0]) ? [g[0], true, g[2]] : g) : SCHEMA;
+  $('#settingsCard').innerHTML = `<h2>${isBrand() ? 'Logo và watermark' : 'Hiệu ứng và phụ đề'}</h2>` + groups.map(([title, open, fields], gi) => `
     <details class="grp" ${open ? 'open' : ''}><summary>${title}</summary><div class="grpbody">${fields.map(([path, type, label, o = {}]) => {
     const v = deepGet(c, path);
     if (type === 'range') { const mul = o.mul || 1; return `<div class="fld"><div class="lab"><span>${label}</span><output>${(v * mul).toFixed(1)}</output></div><input type="range" data-path="${path}" data-mul="${mul}" min="${o.min}" max="${o.max}" step="${o.step}" value="${v * mul}"></div>`; }
@@ -864,13 +878,16 @@ function enter4() {
   buildSettings();
   const h = $('#exportHint');
   if (S.status.export_dir) { h.hidden = false; h.textContent = 'Video xuất xong cũng được chép tự động vào: ' + S.status.export_dir; } else h.hidden = true;
-  const sel = $('#pvCue');
+  const sel = $('#pvCue'), tm = $('#pvTime');
+  sel.hidden = isBrand(); tm.hidden = !isBrand();
+  if (isBrand()) { tm.max = Math.max(1, Math.floor(S.p.info.duration)); if (!tm._set) { tm.value = Math.min(tm.max, 10); tm._set = 1; } preview(); api(`/api/p/${S.p.id}/check`).then(r => { showResult(r.checks, false); }).catch(() => { }); return; }
   sel.innerHTML = S.p.cues.map((c, i) => `<option value="${i}">Câu #${c.id} · ${fmt(c.start)}</option>`).join('') || '<option value="-1">Không có câu</option>';
   sel.value = Math.min(S.cur, S.p.cues.length - 1);
   preview();
   api(`/api/p/${S.p.id}/check`).then(r => { showResult(r.checks, false); }).catch(() => { });
 }
 $('#pvCue').onchange = e => { S.cur = +e.target.value; preview(); };
+$('#pvTime').addEventListener('input', debounce(() => preview(), 400));
 $('#settingsCard').addEventListener('input', e => {
   const el = e.target, path = el.dataset.path; if (!path) return;
   let v;
@@ -890,9 +907,10 @@ $('#settingsCard').addEventListener('change', async e => {
 });
 const previewSoon = debounce(() => preview(), 700);
 async function preview() {
-  if (!S.p.cues.length) return;
-  const c = S.p.cues[Math.max(0, +$('#pvCue').value)] || S.p.cues[0];
-  const t = (c.start + c.end) / 2, n = ++S.pvN;
+  let t;
+  if (isBrand()) t = +$('#pvTime').value;
+  else { if (!S.p.cues.length) return; const c = S.p.cues[Math.max(0, +$('#pvCue').value)] || S.p.cues[0]; t = (c.start + c.end) / 2; }
+  const n = ++S.pvN;
   $('#pvBusy').classList.add('show');
   try {
     const r = await api(`/api/p/${S.p.id}/preview`, { json: { t, settings: S.p.settings, cues: S.p.cues } });
@@ -903,7 +921,7 @@ async function preview() {
 }
 $('#renderBtn').onclick = async () => {
   const b = $('#renderBtn');
-  if (!S.p.cues.some(c => (c.vi || '').trim())) return toast('Chưa có bản dịch. Hãy dịch hoặc nhập SRT ở bước 3.', true);
+  if (cfg().sub.enabled !== false && !S.p.cues.some(c => (c.vi || '').trim())) return toast('Chưa có bản dịch. Hãy dịch hoặc nhập SRT ở bước 3, hoặc tắt "Ghép phụ đề Việt" nếu chỉ gắn logo/watermark.', true);
   try { await api(`/api/p/${S.p.id}/render`, { json: { cues: S.p.cues, settings: S.p.settings } }); }
   catch (e) { return toast(e.message, true); }
   $('#resultCard').hidden = true;
@@ -922,6 +940,7 @@ function showResult(checks, scroll) {
   $('#dlMp4').href = U(`/api/p/${id}/final?download=1`);
   $('#dlVi').href = U(`/api/p/${id}/srt/vi`); $('#dlSrc').href = U(`/api/p/${id}/srt/src`);
   $('#checks').innerHTML = checks.map((c, i) => `<li class="${c.ok ? '' : 'bad'}" style="--i:${i}"><i>${c.ok ? '✓' : '!'}</i><span>${esc(c.name)}</span><small>${esc(c.value)}</small></li>`).join('');
+  $('#dlVi').hidden = $('#dlSrc').hidden = isBrand();
   card.hidden = false;
   if (scroll) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
