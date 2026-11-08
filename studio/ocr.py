@@ -877,14 +877,20 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
 
     plang = bands[primary]["lang"]
     cues = []
+    drop = {"ngắn": 0, "độ tin cậy thấp": 0, "chữ không hợp lệ": 0}
+    drop_ex = []  # vài chữ bị loại để người dùng biết vì sao (vd. chọn nhầm ngôn ngữ dải)
     for s in segs:
         seg_conf = sum(c for _, c in s["texts"]) / len(s["texts"])
         counter = collections.Counter(t for t, _ in s["texts"])
         top = max(counter.items(), key=lambda kv: (kv[1], len(kv[0])))[0]
         # câu chỉ thấy ở 1 khung (< 0,25s ở fps 6) trước đây luôn bị bỏ -> mất câu ngắn; nay giữ nếu đọc chắc chắn
         if (s["end_i"] - s["start_i"] + 1) / fps < 0.25 and seg_conf < max(seg_min, 70.0):
+            drop["ngắn"] += 1
             continue
         if seg_conf < seg_min or not _cue_ok(top, seg_conf, plang):
+            drop["độ tin cậy thấp" if seg_conf < seg_min else "chữ không hợp lệ"] += 1
+            if len(drop_ex) < 3:
+                drop_ex.append(f"{top[:14]} ({round(seg_conf)})")
             continue
         refs = []
         for bi in range(len(bands)):
@@ -924,7 +930,13 @@ def run_ocr(video, info, bands, primary, fps=6.0, t0=0.0, t1=None, thr=210, min_
         c["start"], c["end"] = round(c["start"], 3), round(c["end"], 3)
         c["id"] = i
     if cb:
-        cb(1.0, f"Xong: {len(cues)} câu")
+        lost = sum(drop.values())
+        why = ""
+        if lost:
+            why = f" · đã loại {lost} đoạn chữ (" + ", ".join(f"{v} {k}" for k, v in drop.items() if v) + ")"
+            if drop_ex:
+                why += ", ví dụ: " + "; ".join(drop_ex)
+        cb(1.0, f"Xong: {len(cues)} câu{why}")
     return cues
 
 
